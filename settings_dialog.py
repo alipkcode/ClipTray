@@ -194,6 +194,40 @@ class SettingsDialog(QWidget):
 
         panel_layout.addLayout(ctp_row)
 
+        # ── Divider ──
+        divider_mid = QWidget()
+        divider_mid.setFixedHeight(1)
+        divider_mid.setStyleSheet("background-color: rgba(255, 255, 255, 0.04);")
+        panel_layout.addWidget(divider_mid)
+
+        # ── Caret Companion Toggle ──
+        cc_row = QHBoxLayout()
+        cc_row.setSpacing(16)
+
+        cc_text_col = QVBoxLayout()
+        cc_text_col.setSpacing(4)
+
+        cc_title = QLabel("\u2328  Caret Companion")
+        cc_title.setObjectName("SettingsItemTitle")
+        cc_text_col.addWidget(cc_title)
+
+        cc_desc = QLabel(
+            "Shows a tiny ClipTray icon near your text cursor\n"
+            "while you type. Click it to open ClipTray without\n"
+            "losing focus on your current text field."
+        )
+        cc_desc.setObjectName("SettingsItemDesc")
+        cc_desc.setWordWrap(True)
+        cc_text_col.addWidget(cc_desc)
+
+        cc_row.addLayout(cc_text_col, 1)
+
+        self.cc_toggle = ToggleSwitch(checked=self.settings.caret_companion)
+        self.cc_toggle.toggled.connect(self._on_cc_toggled)
+        cc_row.addWidget(self.cc_toggle, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        panel_layout.addLayout(cc_row)
+
         # ── Status indicator ──
         self.status_label = QLabel()
         self.status_label.setObjectName("SettingsStatusLabel")
@@ -226,16 +260,27 @@ class SettingsDialog(QWidget):
         self.settings.click_to_paste = checked
         self._update_status_label()
 
+    def _on_cc_toggled(self, checked: bool):
+        """Handle caret companion toggle change."""
+        self.settings.caret_companion = checked
+        self._update_status_label()
+
     def _update_status_label(self):
-        """Update the status text below the toggle."""
+        """Update the status text below the toggles."""
+        parts = []
         if self.settings.click_to_paste:
-            self.status_label.setText("✓  Click-to-Paste is ON — click a text field after selecting a clip")
+            parts.append("\u2713 Click-to-Paste is ON")
+        if self.settings.caret_companion:
+            parts.append("\u2713 Caret Companion is ON")
+
+        if parts:
+            self.status_label.setText("  \u00b7  ".join(parts))
             self.status_label.setStyleSheet(
                 "color: #6C8EFF; font-size: 11px; padding: 8px 12px;"
                 "background: rgba(108, 142, 255, 0.08); border-radius: 8px;"
             )
         else:
-            self.status_label.setText("Clips will be pasted immediately after selection")
+            self.status_label.setText("All features are using default behavior")
             self.status_label.setStyleSheet(
                 "color: #6C7086; font-size: 11px; padding: 8px 12px;"
                 "background: rgba(255, 255, 255, 0.03); border-radius: 8px;"

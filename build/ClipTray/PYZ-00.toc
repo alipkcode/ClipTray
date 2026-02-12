@@ -340,6 +340,10 @@
   ('bisect', 'C:\\Python312\\Lib\\bisect.py', 'PYMODULE'),
   ('bz2', 'C:\\Python312\\Lib\\bz2.py', 'PYMODULE'),
   ('calendar', 'C:\\Python312\\Lib\\calendar.py', 'PYMODULE'),
+  ('caret_companion',
+   'C:\\Users\\Ali\\OneDrive\\Desktop\\computer '
+   'class\\Tamrin\\ClipTray\\caret_companion.py',
+   'PYMODULE'),
   ('charset_normalizer',
    'C:\\Users\\Ali\\AppData\\Roaming\\Python\\Python312\\site-packages\\charset_normalizer\\__init__.py',
    'PYMODULE'),

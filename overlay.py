@@ -318,6 +318,9 @@ class OverlayWindow(QWidget):
             self.settings_dialog.hide()
             self.settings_dialog.deleteLater()
             self.settings_dialog = None
+        # Notify main app that settings may have changed
+        if hasattr(self, 'settings_changed') and callable(self.settings_changed):
+            self.settings_changed()
 
     def _open_dialog(self, clip=None):
         """Show the add/edit dialog overlaid on the panel."""

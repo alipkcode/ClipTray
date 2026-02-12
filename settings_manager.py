@@ -14,6 +14,7 @@ class SettingsManager:
 
     DEFAULTS = {
         "click_to_paste": False,  # When True, wait for user click before pasting
+        "caret_companion": False,  # When True, show a small icon near the text cursor
     }
 
     def __init__(self, filepath: str = None):
@@ -65,3 +66,12 @@ class SettingsManager:
     @click_to_paste.setter
     def click_to_paste(self, value: bool):
         self.set("click_to_paste", value)
+
+    @property
+    def caret_companion(self) -> bool:
+        """Whether the caret companion icon is enabled."""
+        return bool(self.get("caret_companion", False))
+
+    @caret_companion.setter
+    def caret_companion(self, value: bool):
+        self.set("caret_companion", value)

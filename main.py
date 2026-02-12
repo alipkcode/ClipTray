@@ -25,6 +25,7 @@ from clip_manager import ClipManager, TextStep, ActionStep
 from settings_manager import SettingsManager
 from overlay import OverlayWindow
 from splash import SplashOverlay
+from caret_companion import CaretCompanion
 
 
 # ── Disable pyautogui fail-safe for smoother operation ──
@@ -296,6 +297,14 @@ class ClipTrayApp:
         from styles import get_stylesheet
         self._badge_stylesheet = get_stylesheet()
 
+        # ── Caret Companion ──
+        self.caret_companion = CaretCompanion()
+        self.caret_companion.open_requested.connect(self._on_companion_open)
+        self.caret_companion.set_enabled(self.settings.caret_companion)
+
+        # Watch for settings changes (re-check after overlay closes)
+        self.overlay.settings_changed = self._on_settings_changed
+
         # ── Show tray ──
         self.tray_icon.show()
 
@@ -321,7 +330,18 @@ class ClipTrayApp:
 
     def _show_overlay(self):
         """Show the overlay window."""
+        if self.caret_companion:
+            self.caret_companion.hide_icon()
         self.overlay.show_overlay()
+
+    def _on_companion_open(self):
+        """User clicked the caret companion icon — open overlay."""
+        self.caret_companion.hide_icon()
+        self.overlay.show_overlay()
+
+    def _on_settings_changed(self):
+        """Called when settings dialog closes — re-sync caret companion."""
+        self.caret_companion.set_enabled(self.settings.caret_companion)
 
     def _on_type_clip(self, text: str):
         """Handle clip selection — type the text into the active field (immediate mode)."""
@@ -422,6 +442,7 @@ class ClipTrayApp:
         """Clean exit."""
         self._stop_click_listener()
         self._hide_waiting_badge()
+        self.caret_companion.set_enabled(False)
         self.tray_icon.hide()
         self.app.quit()
 
