@@ -21,7 +21,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 
 import pyautogui
 
-from clip_manager import ClipManager
+from clip_manager import ClipManager, TextStep, ActionStep
 from settings_manager import SettingsManager
 from overlay import OverlayWindow
 from splash import SplashOverlay
@@ -131,6 +131,39 @@ def _restore_clipboard(old_text: str):
         pass
 
 
+def execute_macro(steps):
+    """
+    Execute a macro — a sequence of TextStep and ActionStep objects.
+    For TextStep: types the text using clipboard paste.
+    For ActionStep: presses the specified key combination.
+    """
+    import pyperclip
+
+    # Save clipboard once at the start
+    try:
+        old_clipboard = pyperclip.paste()
+    except Exception:
+        old_clipboard = ""
+
+    for i, step in enumerate(steps):
+        if isinstance(step, TextStep) and step.value:
+            pyperclip.copy(step.value)
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'v')
+            time.sleep(0.1)
+        elif isinstance(step, ActionStep) and step.keys:
+            time.sleep(0.05)
+            pyautogui.hotkey(*step.keys)
+            time.sleep(0.1)
+
+        # Small gap between steps for reliability
+        if i < len(steps) - 1:
+            time.sleep(0.05)
+
+    # Restore clipboard after a delay
+    QTimer.singleShot(1000, lambda: _restore_clipboard(old_clipboard))
+
+
 class ClickSignalBridge(QObject):
     """Bridge to safely emit Qt signals from a background pynput thread."""
     click_detected = pyqtSignal()
@@ -225,6 +258,7 @@ class ClipTrayApp:
 
         # ── Click-to-paste state ──
         self._waiting_text = None       # Text waiting to be pasted
+        self._waiting_macro = None      # Macro clip waiting to be executed
         self._mouse_listener = None     # pynput listener thread
         self._waiting_badge = None      # Floating badge widget
         self._click_bridge = ClickSignalBridge()
@@ -255,6 +289,8 @@ class ClipTrayApp:
         self.overlay = OverlayWindow(self.clip_manager, self.settings)
         self.overlay.type_clip.connect(self._on_type_clip)
         self.overlay.wait_and_type_clip.connect(self._on_wait_and_type_clip)
+        self.overlay.execute_macro.connect(self._on_execute_macro)
+        self.overlay.wait_and_execute_macro.connect(self._on_wait_and_execute_macro)
 
         # Import stylesheet for badge
         from styles import get_stylesheet
@@ -296,6 +332,19 @@ class ClipTrayApp:
     def _on_wait_and_type_clip(self, text: str):
         """Handle clip selection in Click-to-Paste mode — wait for user click."""
         self._waiting_text = text
+        self._waiting_macro = None
+        self._show_waiting_badge()
+        self._start_click_listener()
+
+    def _on_execute_macro(self, clip):
+        """Handle macro clip selection — execute the step sequence immediately."""
+        time.sleep(0.15)
+        execute_macro(clip.steps)
+
+    def _on_wait_and_execute_macro(self, clip):
+        """Handle macro clip selection in Click-to-Paste mode — wait for user click."""
+        self._waiting_text = None
+        self._waiting_macro = clip
         self._show_waiting_badge()
         self._start_click_listener()
 
@@ -351,7 +400,12 @@ class ClipTrayApp:
         self._stop_click_listener()
         self._hide_waiting_badge()
 
-        if self._waiting_text:
+        if self._waiting_macro:
+            clip = self._waiting_macro
+            self._waiting_macro = None
+            self._waiting_text = None
+            QTimer.singleShot(150, lambda: execute_macro(clip.steps))
+        elif self._waiting_text:
             text = self._waiting_text
             self._waiting_text = None
             # Small delay to let the click register in the target field
@@ -362,6 +416,7 @@ class ClipTrayApp:
         self._stop_click_listener()
         self._hide_waiting_badge()
         self._waiting_text = None
+        self._waiting_macro = None
 
     def _quit(self):
         """Clean exit."""

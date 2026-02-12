@@ -362,4 +362,92 @@ def get_stylesheet() -> str:
         background-color: rgba(255, 80, 80, 0.15);
         color: #FF6C6C;
     }
+
+    /* ── Macro Builder ── */
+    #MacroIndicator {
+        background-color: rgba(108, 142, 255, 0.15);
+        border-radius: 10px;
+        color: #6C8EFF;
+        font-size: 12px;
+    }
+    #MacroTextContainer {
+        background-color: #1E1E2E;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+    }
+    #MacroTextEdit {
+        background-color: transparent;
+        color: #CDD6F4;
+        font-size: 13px;
+        border: none;
+        padding: 8px;
+        selection-background-color: rgba(108, 142, 255, 0.25);
+    }
+    #ActionBadge {
+        background-color: rgba(108, 142, 255, 0.12);
+        border: 1px solid rgba(108, 142, 255, 0.25);
+        border-radius: 8px;
+    }
+    #ActionBadgeLabel {
+        color: #6C8EFF;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    #ActionBadgeDelete {
+        background-color: transparent;
+        border: none;
+        color: #6C7086;
+        font-size: 12px;
+        padding: 0px;
+    }
+    #ActionBadgeDelete:hover {
+        color: #FF6C6C;
+    }
+    #AddActionBtn {
+        background-color: rgba(108, 142, 255, 0.08);
+        border: 1px dashed rgba(108, 142, 255, 0.3);
+        border-radius: 8px;
+        color: #6C8EFF;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 6px 16px;
+    }
+    #AddActionBtn:hover {
+        background-color: rgba(108, 142, 255, 0.18);
+        border-color: rgba(108, 142, 255, 0.5);
+    }
+    #KeyCaptureBtn {
+        background-color: rgba(166, 227, 161, 0.1);
+        border: 1px solid rgba(166, 227, 161, 0.3);
+        border-radius: 8px;
+        color: #A6E3A1;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 8px 20px;
+    }
+    #KeyCaptureBtn:hover {
+        background-color: rgba(166, 227, 161, 0.2);
+    }
+    #KeyCaptureBtn:focus {
+        border-color: #A6E3A1;
+        background-color: rgba(166, 227, 161, 0.25);
+    }
+    #MacroToggle {
+        background-color: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+    }
+    #MacroToggleBtn {
+        background-color: transparent;
+        border: none;
+        border-radius: 8px;
+        color: #6C7086;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 6px 14px;
+    }
+    #MacroToggleBtn:checked {
+        background-color: rgba(108, 142, 255, 0.15);
+        color: #6C8EFF;
+    }
     """

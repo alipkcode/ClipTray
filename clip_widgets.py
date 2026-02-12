@@ -20,12 +20,14 @@ class ClipCard(QWidget):
     edit_clicked = pyqtSignal(str)  # clip_id — user wants to edit
     delete_clicked = pyqtSignal(str)  # clip_id — user wants to delete
 
-    def __init__(self, clip_id: str, title: str, text: str, color: str = "#6C8EFF", parent=None):
+    def __init__(self, clip_id: str, title: str, text: str, color: str = "#6C8EFF",
+                 is_macro: bool = False, parent=None):
         super().__init__(parent)
         self.clip_id = clip_id
         self.clip_title = title
         self.clip_text = text
         self.accent_color = color
+        self.is_macro = is_macro
 
         self.setObjectName("ClipCard")
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -54,11 +56,23 @@ class ClipCard(QWidget):
         text_layout.setSpacing(4)
         text_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Title
+        # Title row (with optional macro badge)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        title_row.setContentsMargins(0, 0, 0, 0)
+
+        if self.is_macro:
+            macro_badge = QLabel("⚡")
+            macro_badge.setObjectName("MacroIndicator")
+            macro_badge.setFixedSize(20, 20)
+            macro_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title_row.addWidget(macro_badge)
+
         self.title_label = QLabel(self.clip_title)
         self.title_label.setObjectName("ClipCardTitle")
         self.title_label.setWordWrap(False)
-        text_layout.addWidget(self.title_label)
+        title_row.addWidget(self.title_label, 1)
+        text_layout.addLayout(title_row)
 
         # Preview text (truncated to one line)
         preview = self.clip_text.replace("\n", " ").strip()

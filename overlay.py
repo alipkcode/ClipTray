@@ -34,6 +34,9 @@ class OverlayWindow(QWidget):
     type_clip = pyqtSignal(str)  # clip text
     # Signal emitted when click-to-paste mode: user selects a clip, wait for click
     wait_and_type_clip = pyqtSignal(str)  # clip text
+    # Signal for macro execution (passes clip object as dict)
+    execute_macro = pyqtSignal(object)  # clip object
+    wait_and_execute_macro = pyqtSignal(object)  # clip object
 
     def __init__(self, clip_manager: ClipManager, settings: SettingsManager = None, parent=None):
         super().__init__(parent)
@@ -223,8 +226,9 @@ class OverlayWindow(QWidget):
             card = ClipCard(
                 clip_id=clip.id,
                 title=clip.title,
-                text=clip.text,
+                text=clip.get_preview_text() if clip.is_macro else clip.text,
                 color=clip.color,
+                is_macro=clip.is_macro,
                 parent=self.clip_list_widget
             )
             card.clicked.connect(self._on_clip_clicked)
@@ -268,12 +272,18 @@ class OverlayWindow(QWidget):
         clip = self.clip_manager.get_clip(clip_id)
         if clip:
             self.hide_overlay()
-            if self.settings.click_to_paste:
-                # Click-to-Paste mode: emit wait signal
-                QTimer.singleShot(200, lambda: self.wait_and_type_clip.emit(clip.text))
+            if clip.is_macro and clip.steps:
+                # Macro clip — execute the sequence
+                if self.settings.click_to_paste:
+                    QTimer.singleShot(200, lambda: self.wait_and_execute_macro.emit(clip))
+                else:
+                    QTimer.singleShot(300, lambda: self.execute_macro.emit(clip))
             else:
-                # Immediate mode: paste right away
-                QTimer.singleShot(300, lambda: self.type_clip.emit(clip.text))
+                # Simple text clip
+                if self.settings.click_to_paste:
+                    QTimer.singleShot(200, lambda: self.wait_and_type_clip.emit(clip.text))
+                else:
+                    QTimer.singleShot(300, lambda: self.type_clip.emit(clip.text))
 
     def _on_add(self):
         """Open the add clip dialog."""
@@ -331,10 +341,15 @@ class OverlayWindow(QWidget):
         title = self.dialog.result_title
         text = self.dialog.result_text
         color = self.dialog.result_color
+        is_macro = getattr(self.dialog, 'result_is_macro', False)
+        steps = getattr(self.dialog, 'result_steps', [])
 
         if original_clip:
             # Update existing
-            self.clip_manager.update_clip(original_clip.id, title, text)
+            self.clip_manager.update_clip(
+                original_clip.id, title, text,
+                is_macro=is_macro, steps=steps
+            )
             # Also update color
             c = self.clip_manager.get_clip(original_clip.id)
             if c:
@@ -342,7 +357,10 @@ class OverlayWindow(QWidget):
                 self.clip_manager.save()
         else:
             # Create new
-            self.clip_manager.add_clip(title, text, color)
+            self.clip_manager.add_clip(
+                title, text, color,
+                is_macro=is_macro, steps=steps
+            )
 
         self.dialog.hide()
         self.dialog.deleteLater()

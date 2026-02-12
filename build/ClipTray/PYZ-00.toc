@@ -533,6 +533,10 @@
   ('json.scanner', 'C:\\Python312\\Lib\\json\\scanner.py', 'PYMODULE'),
   ('logging', 'C:\\Python312\\Lib\\logging\\__init__.py', 'PYMODULE'),
   ('lzma', 'C:\\Python312\\Lib\\lzma.py', 'PYMODULE'),
+  ('macro_builder',
+   'C:\\Users\\Ali\\OneDrive\\Desktop\\computer '
+   'class\\Tamrin\\ClipTray\\macro_builder.py',
+   'PYMODULE'),
   ('mimetypes', 'C:\\Python312\\Lib\\mimetypes.py', 'PYMODULE'),
   ('mouseinfo',
    'C:\\Users\\Ali\\AppData\\Roaming\\Python\\Python312\\site-packages\\mouseinfo\\__init__.py',
