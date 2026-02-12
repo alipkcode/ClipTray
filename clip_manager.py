@@ -64,6 +64,7 @@ class Clip:
     color: str = "#6C8EFF"
     is_macro: bool = False
     steps: List[Union[TextStep, ActionStep]] = field(default_factory=list)
+    pinned: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -73,6 +74,7 @@ class Clip:
             "color": self.color,
             "is_macro": self.is_macro,
             "steps": [s.to_dict() for s in self.steps] if self.steps else [],
+            "pinned": self.pinned,
         }
 
     @classmethod
@@ -86,6 +88,7 @@ class Clip:
             color=data.get("color", "#6C8EFF"),
             is_macro=data.get("is_macro", False),
             steps=steps,
+            pinned=data.get("pinned", False),
         )
 
     def get_preview_text(self) -> str:
@@ -162,7 +165,9 @@ class ClipManager:
             self._color_index += 1
         clip = Clip(title=title, text=text, color=color,
                     is_macro=is_macro, steps=steps or [])
-        self.clips.insert(0, clip)  # Newest first
+        # Insert after pinned clips so new clips appear at top of unpinned section
+        insert_pos = sum(1 for c in self.clips if c.pinned)
+        self.clips.insert(insert_pos, clip)
         self.save()
         return clip
 
@@ -200,7 +205,39 @@ class ClipManager:
         query = query.lower().strip()
         if not query:
             return self.clips
-        return [
+        results = [
             c for c in self.clips
             if query in c.title.lower() or query in c.text.lower()
         ]
+        # Ensure pinned clips appear first in search results
+        pinned = [c for c in results if c.pinned]
+        unpinned = [c for c in results if not c.pinned]
+        return pinned + unpinned
+
+    def toggle_pin(self, clip_id: str) -> Optional[Clip]:
+        """Toggle the pinned state of a clip and reposition it."""
+        clip = self.get_clip(clip_id)
+        if not clip:
+            return None
+        clip.pinned = not clip.pinned
+        # Remove from current position
+        self.clips.remove(clip)
+        # Place at end of pinned section
+        insert_pos = sum(1 for c in self.clips if c.pinned)
+        self.clips.insert(insert_pos, clip)
+        self.save()
+        return clip
+
+    def reorder_clips(self, ordered_ids: List[str]):
+        """Reorder clips based on an ordered list of clip IDs."""
+        id_to_clip = {c.id: c for c in self.clips}
+        new_order = []
+        for cid in ordered_ids:
+            if cid in id_to_clip:
+                new_order.append(id_to_clip[cid])
+        # Append any clips not in the ordered list (safety net)
+        for clip in self.clips:
+            if clip not in new_order:
+                new_order.append(clip)
+        self.clips = new_order
+        self.save()

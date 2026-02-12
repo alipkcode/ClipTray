@@ -6,10 +6,10 @@ Each card shows the clip title, a preview of the text, and action buttons.
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QSizePolicy, QGraphicsDropShadowEffect
+    QSizePolicy, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QCursor
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QMimeData, QPoint
+from PyQt6.QtGui import QColor, QCursor, QDrag
 
 
 class ClipCard(QWidget):
@@ -19,15 +19,20 @@ class ClipCard(QWidget):
     clicked = pyqtSignal(str)      # clip_id — user wants to type this clip
     edit_clicked = pyqtSignal(str)  # clip_id — user wants to edit
     delete_clicked = pyqtSignal(str)  # clip_id — user wants to delete
+    pin_clicked = pyqtSignal(str)  # clip_id — user wants to pin/unpin
 
     def __init__(self, clip_id: str, title: str, text: str, color: str = "#6C8EFF",
-                 is_macro: bool = False, parent=None):
+                 is_macro: bool = False, pinned: bool = False,
+                 draggable: bool = True, parent=None):
         super().__init__(parent)
         self.clip_id = clip_id
         self.clip_title = title
         self.clip_text = text
         self.accent_color = color
         self.is_macro = is_macro
+        self.pinned = pinned
+        self.draggable = draggable
+        self._drag_start_pos = None
 
         self.setObjectName("ClipCard")
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -42,7 +47,16 @@ class ClipCard(QWidget):
         """Construct the card layout."""
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(12, 10, 12, 10)
-        main_layout.setSpacing(12)
+        main_layout.setSpacing(10)
+
+        # ── Drag handle ──
+        if self.draggable:
+            self.drag_handle = QLabel("⠿")
+            self.drag_handle.setObjectName("DragHandle")
+            self.drag_handle.setFixedSize(20, 40)
+            self.drag_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.drag_handle.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+            main_layout.addWidget(self.drag_handle)
 
         # ── Color accent strip ──
         accent = QLabel()
@@ -56,10 +70,17 @@ class ClipCard(QWidget):
         text_layout.setSpacing(4)
         text_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Title row (with optional macro badge)
+        # Title row (with optional pin/macro badges)
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
         title_row.setContentsMargins(0, 0, 0, 0)
+
+        if self.pinned:
+            pin_indicator = QLabel("📌")
+            pin_indicator.setObjectName("PinIndicator")
+            pin_indicator.setFixedSize(18, 18)
+            pin_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title_row.addWidget(pin_indicator)
 
         if self.is_macro:
             macro_badge = QLabel("⚡")
@@ -90,6 +111,15 @@ class ClipCard(QWidget):
         btn_layout.setSpacing(4)
         btn_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Pin button
+        pin_text = "📌" if self.pinned else "📍"
+        self.pin_btn = QPushButton(pin_text)
+        self.pin_btn.setObjectName("PinBtnActive" if self.pinned else "PinBtn")
+        self.pin_btn.setToolTip("Unpin" if self.pinned else "Pin to top")
+        self.pin_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.pin_btn.clicked.connect(lambda: self.pin_clicked.emit(self.clip_id))
+        btn_layout.addWidget(self.pin_btn)
+
         # Edit button
         self.edit_btn = QPushButton("✎")
         self.edit_btn.setObjectName("CardActionBtn")
@@ -117,13 +147,58 @@ class ClipCard(QWidget):
         self.setGraphicsEffect(shadow)
 
     def mousePressEvent(self, event):
-        """Handle card click — emit signal to type this clip."""
+        """Handle card click — start drag or emit click signal."""
         if event.button() == Qt.MouseButton.LeftButton:
-            # Only emit if the click was not on a button
             child = self.childAt(event.pos())
-            if child not in (self.edit_btn, self.delete_btn):
+            # Start drag if clicking on drag handle
+            if self.draggable and hasattr(self, 'drag_handle') and child is self.drag_handle:
+                self._drag_start_pos = event.pos()
+                return
+            # Emit click if not clicking on any button
+            interactive = [self.edit_btn, self.delete_btn, self.pin_btn]
+            if hasattr(self, 'drag_handle'):
+                interactive.append(self.drag_handle)
+            if child not in interactive:
                 self.clicked.emit(self.clip_id)
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Start drag operation if mouse moved far enough from drag handle."""
+        if (self._drag_start_pos is not None and
+                event.buttons() & Qt.MouseButton.LeftButton):
+            distance = (event.pos() - self._drag_start_pos).manhattanLength()
+            if distance >= QApplication.startDragDistance():
+                self._perform_drag()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Reset drag state."""
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
+
+    def _perform_drag(self):
+        """Initiate a QDrag operation for reordering."""
+        self._drag_start_pos = None
+
+        # Grab pixmap before changing visual
+        pixmap = self.grab()
+
+        # Dim the card while it is being dragged
+        opacity = QGraphicsOpacityEffect(self)
+        opacity.setOpacity(0.3)
+        self.setGraphicsEffect(opacity)
+
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData("application/x-cliptray-clip", self.clip_id.encode())
+        drag.setMimeData(mime)
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
+
+        drag.exec(Qt.DropAction.MoveAction)
+
+        # Restore shadow effect after drag completes
+        self._add_shadow()
 
     def enterEvent(self, event):
         """Slight scale-up hover effect via stylesheet adjustment."""

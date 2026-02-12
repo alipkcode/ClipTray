@@ -21,6 +21,99 @@ from settings_manager import SettingsManager
 from styles import get_stylesheet
 
 
+class DroppableClipList(QWidget):
+    """Container widget that accepts clip card drops for reordering."""
+    clips_reordered = pyqtSignal(str, int)  # clip_id, target_index
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._drop_indicator = None
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-cliptray-clip"):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-cliptray-clip"):
+            event.acceptProposedAction()
+            self._show_drop_indicator(event.position().toPoint())
+
+    def dragLeaveEvent(self, event):
+        self._hide_drop_indicator()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-cliptray-clip"):
+            clip_id = bytes(event.mimeData().data("application/x-cliptray-clip")).decode()
+            target_idx = self._calc_drop_index(event.position().toPoint())
+            self._hide_drop_indicator()
+            self.clips_reordered.emit(clip_id, target_idx)
+            event.acceptProposedAction()
+
+    def _calc_drop_index(self, pos):
+        """Calculate which card index the drop should occur at."""
+        layout = self.layout()
+        if not layout:
+            return 0
+        card_index = 0
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget and isinstance(widget, ClipCard):
+                mid_y = widget.y() + widget.height() // 2
+                if pos.y() < mid_y:
+                    return card_index
+                card_index += 1
+        return card_index
+
+    def _show_drop_indicator(self, pos):
+        """Show a visual indicator line at the drop position."""
+        layout = self.layout()
+        if not layout:
+            return
+
+        target_idx = self._calc_drop_index(pos)
+
+        if self._drop_indicator is None:
+            self._drop_indicator = QWidget(self)
+            self._drop_indicator.setObjectName("DropIndicator")
+            self._drop_indicator.setFixedHeight(3)
+            self._drop_indicator.setStyleSheet(
+                "background-color: #6C8EFF; border-radius: 1px;"
+            )
+
+        # Find the Y position for the indicator
+        card_index = 0
+        y = 0
+        found = False
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget and isinstance(widget, ClipCard):
+                if card_index == target_idx:
+                    y = widget.y() - 2
+                    found = True
+                    break
+                card_index += 1
+                y = widget.y() + widget.height() + 2
+
+        self._drop_indicator.setGeometry(10, y, self.width() - 20, 3)
+        self._drop_indicator.show()
+        self._drop_indicator.raise_()
+
+    def _hide_drop_indicator(self):
+        """Hide the drop indicator."""
+        if self._drop_indicator:
+            self._drop_indicator.hide()
+            self._drop_indicator.deleteLater()
+            self._drop_indicator = None
+
+
 class OverlayWindow(QWidget):
     """
     Fullscreen transparent overlay that:
@@ -44,6 +137,7 @@ class OverlayWindow(QWidget):
         self.settings = settings or SettingsManager()
         self.dialog = None  # Active add/edit dialog
         self.settings_dialog = None  # Active settings dialog
+        self._displayed_clip_ids = []  # Track displayed clip order for reorder
 
         # ── Window setup ──
         self.setWindowFlags(
@@ -147,7 +241,8 @@ class OverlayWindow(QWidget):
         )
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
-        self.clip_list_widget = QWidget()
+        self.clip_list_widget = DroppableClipList()
+        self.clip_list_widget.clips_reordered.connect(self._on_clips_reordered)
         self.clip_list_layout = QVBoxLayout(self.clip_list_widget)
         self.clip_list_layout.setContentsMargins(0, 0, 4, 0)
         self.clip_list_layout.setSpacing(8)
@@ -217,23 +312,44 @@ class OverlayWindow(QWidget):
                 widget.deleteLater()
 
         clips = self.clip_manager.search(query)
+        is_searching = bool(query.strip())
+
+        # Store displayed clip IDs for reorder tracking
+        self._displayed_clip_ids = [c.id for c in clips]
 
         if not clips:
             self._show_empty_state(query)
             return
 
+        # Check if we need a separator between pinned and unpinned
+        has_pinned = any(c.pinned for c in clips)
+        has_unpinned = any(not c.pinned for c in clips)
+        separator_added = False
+
         for clip in clips:
+            # Add separator before first unpinned clip
+            if has_pinned and has_unpinned and not clip.pinned and not separator_added:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setObjectName("PinnedSeparator")
+                sep.setFixedHeight(1)
+                self.clip_list_layout.addWidget(sep)
+                separator_added = True
+
             card = ClipCard(
                 clip_id=clip.id,
                 title=clip.title,
                 text=clip.get_preview_text() if clip.is_macro else clip.text,
                 color=clip.color,
                 is_macro=clip.is_macro,
+                pinned=clip.pinned,
+                draggable=not is_searching,
                 parent=self.clip_list_widget
             )
             card.clicked.connect(self._on_clip_clicked)
             card.edit_clicked.connect(self._on_edit)
             card.delete_clicked.connect(self._on_delete)
+            card.pin_clicked.connect(self._on_pin)
             self.clip_list_layout.addWidget(card)
 
     def _show_empty_state(self, query: str = ""):
@@ -298,6 +414,26 @@ class OverlayWindow(QWidget):
     def _on_delete(self, clip_id: str):
         """Delete a clip and refresh."""
         self.clip_manager.delete_clip(clip_id)
+        query = self.search_input.text().strip()
+        self._refresh_clips(query)
+
+    def _on_pin(self, clip_id: str):
+        """Toggle pin state of a clip."""
+        self.clip_manager.toggle_pin(clip_id)
+        query = self.search_input.text().strip()
+        self._refresh_clips(query)
+
+    def _on_clips_reordered(self, clip_id: str, target_index: int):
+        """Handle clip reorder via drag-and-drop."""
+        ids = list(self._displayed_clip_ids)
+        if clip_id in ids:
+            old_index = ids.index(clip_id)
+            ids.remove(clip_id)
+            if target_index > old_index:
+                target_index -= 1
+            target_index = max(0, min(target_index, len(ids)))
+            ids.insert(target_index, clip_id)
+        self.clip_manager.reorder_clips(ids)
         query = self.search_input.text().strip()
         self._refresh_clips(query)
 

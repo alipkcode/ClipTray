@@ -560,4 +560,62 @@ def get_stylesheet() -> str:
         color: #6C8EFF;
         font-size: 12px;
     }
+
+    /* ── Drag Handle ────────────────────────────────────── */
+    #DragHandle {
+        color: #45475A;
+        font-size: 16px;
+        padding: 0px;
+        background: transparent;
+        border: none;
+    }
+
+    /* ── Pin Button ─────────────────────────────────────── */
+    #PinBtn {
+        background: rgba(255, 255, 255, 0.04);
+        border: none;
+        border-radius: 6px;
+        color: #6C7086;
+        font-size: 13px;
+        padding: 4px 8px;
+        min-width: 28px;
+        min-height: 28px;
+        max-width: 28px;
+        max-height: 28px;
+    }
+    #PinBtn:hover {
+        background: rgba(255, 200, 50, 0.15);
+        color: #FFD26C;
+    }
+    #PinBtnActive {
+        background: rgba(255, 200, 50, 0.15);
+        border: none;
+        border-radius: 6px;
+        color: #FFD26C;
+        font-size: 13px;
+        padding: 4px 8px;
+        min-width: 28px;
+        min-height: 28px;
+        max-width: 28px;
+        max-height: 28px;
+    }
+    #PinBtnActive:hover {
+        background: rgba(255, 200, 50, 0.25);
+        color: #FFE090;
+    }
+
+    /* ── Pin Indicator ──────────────────────────────────── */
+    #PinIndicator {
+        color: #FFD26C;
+        font-size: 11px;
+        background: transparent;
+        border: none;
+    }
+
+    /* ── Pinned Separator ───────────────────────────────── */
+    #PinnedSeparator {
+        background-color: rgba(255, 255, 255, 0.06);
+        border: none;
+        max-height: 1px;
+    }
     """
