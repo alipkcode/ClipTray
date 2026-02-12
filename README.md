@@ -185,7 +185,6 @@ No automated test suite is currently included in the project. Manual testing can
 
 ## 📜 License
 
-No license file is currently included. The following MIT License is recommended:
 
 ```
 MIT License
