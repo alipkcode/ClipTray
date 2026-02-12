@@ -39,6 +39,10 @@ def build():
         "--name=ClipTray",        # Output name
         "--clean",                # Clean cache
         "--noconfirm",            # Overwrite without asking
+        "--hidden-import=uiautomation",
+        "--hidden-import=comtypes",
+        "--hidden-import=comtypes.gen",
+        "--hidden-import=comtypes.gen.UIAutomationClient",
     ] + datas + [
         main_script
     ]

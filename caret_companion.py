@@ -1,37 +1,48 @@
 """
-ClipTray - Caret Companion
-A tiny floating icon that appears near the text cursor (caret) when the
-user is typing anywhere in Windows. Clicking the icon opens ClipTray
-without stealing focus from the active text field.
+ClipTray – Caret Companion
+A floating icon that appears near the text cursor (caret) whenever
+the user is typing *anywhere* in Windows.
 
-Uses Win32 APIs to detect the caret position in any application.
+Detection strategy (tried in order, first success wins):
+  1. Win32  GetGUIThreadInfo  → native Win32 apps (Notepad, Explorer search …)
+  2. UIA    TextPattern2.GetCaretRange → WPF / UWP / modern frameworks
+  3. UIA    TextPattern.GetSelection   → Chromium / Electron (VS Code, browsers)
+  4. UIA    Focused-control bounding rect → ultimate fallback for any edit field
 """
+
+from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
-import threading
+import os
+import sys
+import traceback
+from typing import Optional, Tuple
 
-from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QGraphicsDropShadowEffect
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPoint
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QApplication
 from PyQt6.QtGui import (
-    QPixmap, QPainter, QColor, QCursor, QIcon, QPen, QBrush,
-    QLinearGradient, QRadialGradient
+    QPixmap, QPainter, QColor, QFont, QCursor, QPen, QBrush, QPainterPath
+)
+from PyQt6.QtCore import (
+    Qt, QTimer, QPoint, QSize, QPropertyAnimation,
+    QEasingCurve, pyqtSignal, QObject
 )
 
 
-# ── Win32 API structures and functions ──
-
+# ─────────────────────────────────────────────────────────
+#  Win32 structures used by GetGUIThreadInfo
+# ─────────────────────────────────────────────────────────
 class GUITHREADINFO(ctypes.Structure):
     _fields_ = [
-        ("cbSize", ctypes.wintypes.DWORD),
-        ("flags", ctypes.wintypes.DWORD),
-        ("hwndActive", ctypes.wintypes.HWND),
-        ("hwndFocus", ctypes.wintypes.HWND),
-        ("hwndCapture", ctypes.wintypes.HWND),
-        ("hwndMenuOwner", ctypes.wintypes.HWND),
-        ("hwndMoveSize", ctypes.wintypes.HWND),
-        ("hwndCaret", ctypes.wintypes.HWND),
-        ("rcCaret", ctypes.wintypes.RECT),
+        ("cbSize",        ctypes.c_ulong),
+        ("flags",         ctypes.c_ulong),
+        ("hwndActive",    ctypes.c_void_p),
+        ("hwndFocus",     ctypes.c_void_p),
+        ("hwndCapture",   ctypes.c_void_p),
+        ("hwndMenuOwner", ctypes.c_void_p),
+        ("hwndMoveSize",  ctypes.c_void_p),
+        ("hwndCaret",     ctypes.c_void_p),
+        ("rcCaret",       ctypes.wintypes.RECT),
     ]
 
 
@@ -39,357 +50,460 @@ class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-
-GetGUIThreadInfo = user32.GetGUIThreadInfo
-GetGUIThreadInfo.argtypes = [ctypes.wintypes.DWORD, ctypes.POINTER(GUITHREADINFO)]
-GetGUIThreadInfo.restype = ctypes.wintypes.BOOL
-
-GetForegroundWindow = user32.GetForegroundWindow
-GetForegroundWindow.restype = ctypes.wintypes.HWND
-
-GetWindowThreadProcessId = user32.GetWindowThreadProcessId
-GetWindowThreadProcessId.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.DWORD)]
-GetWindowThreadProcessId.restype = ctypes.wintypes.DWORD
-
-ClientToScreen = user32.ClientToScreen
-ClientToScreen.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(POINT)]
-ClientToScreen.restype = ctypes.wintypes.BOOL
-
-GetCurrentProcessId = kernel32.GetCurrentProcessId
-GetCurrentProcessId.restype = ctypes.wintypes.DWORD
-
-# GUI_CARETBLINKING flag
-GUI_CARETBLINKING = 0x00000001
+# ─────────────────────────────────────────────────────────
+#  Method 1 – Win32 GetGUIThreadInfo
+#  Works for classic Win32 apps: Notepad, WordPad,
+#  Explorer address / search bars, legacy Office, etc.
+# ─────────────────────────────────────────────────────────
+_user32 = ctypes.windll.user32
+_kernel32 = ctypes.windll.kernel32
 
 
-def get_caret_screen_pos():
-    """
-    Get the screen-space position of the text caret in the foreground window.
-    Returns (x, y, caret_height) or None if no caret is found.
-    """
-    try:
-        hwnd_fg = GetForegroundWindow()
-        if not hwnd_fg:
-            return None
-
-        # Don't track our own process
-        pid = ctypes.wintypes.DWORD()
-        tid = GetWindowThreadProcessId(hwnd_fg, ctypes.byref(pid))
-        if pid.value == GetCurrentProcessId():
-            return None
-
-        gui_info = GUITHREADINFO()
-        gui_info.cbSize = ctypes.sizeof(GUITHREADINFO)
-
-        if not GetGUIThreadInfo(tid, ctypes.byref(gui_info)):
-            return None
-
-        # Check if there's actually a caret
-        if not gui_info.hwndCaret:
-            return None
-
-        caret_rect = gui_info.rcCaret
-        caret_x = caret_rect.left
-        caret_y = caret_rect.top
-        caret_h = max(caret_rect.bottom - caret_rect.top, 16)
-
-        # Convert from client coordinates to screen coordinates
-        pt = POINT(caret_x, caret_y)
-        if not ClientToScreen(gui_info.hwndCaret, ctypes.byref(pt)):
-            return None
-
-        return (pt.x, pt.y, caret_h)
-    except Exception:
+def _get_caret_win32() -> Optional[Tuple[int, int]]:
+    """Return (x, y) screen coords of the caret bottom-left, or None."""
+    gti = GUITHREADINFO()
+    gti.cbSize = ctypes.sizeof(GUITHREADINFO)
+    if not _user32.GetGUIThreadInfo(0, ctypes.byref(gti)):
         return None
+    if not gti.hwndCaret:
+        return None
+    # Skip if the caret belongs to our own process (ClipTray itself)
+    pid = ctypes.c_ulong()
+    _user32.GetWindowThreadProcessId(gti.hwndCaret, ctypes.byref(pid))
+    if pid.value == _kernel32.GetCurrentProcessId():
+        return None
+    pt = POINT(gti.rcCaret.left, gti.rcCaret.top)
+    _user32.ClientToScreen(gti.hwndCaret, ctypes.byref(pt))
+    caret_h = gti.rcCaret.bottom - gti.rcCaret.top
+    return (pt.x, pt.y + caret_h)
 
 
-# ── Signal bridge for thread-safe communication ──
+# ─────────────────────────────────────────────────────────
+#  UIA helpers – lazy-imported so the app doesn't crash
+#  if comtypes isn't ready yet.
+# ─────────────────────────────────────────────────────────
+_uia_ready = False
+_auto = None          # uiautomation module
+_uiaclient = None     # comtypes.gen.UIAutomationClient
 
-class CaretSignalBridge(QObject):
-    """Bridge to safely emit Qt signals from background threads."""
-    caret_moved = pyqtSignal(int, int, int)  # x, y, caret_height
-    caret_lost = pyqtSignal()
+_TEXTPATTERN2_ID = 10024
+_TEXTPATTERN_ID  = 10014
 
 
-# ── The tiny floating icon ──
+def _ensure_uia():
+    """Lazily import uiautomation + comtypes interfaces."""
+    global _uia_ready, _auto, _uiaclient
+    if _uia_ready:
+        return True
+    try:
+        import uiautomation as auto_mod
+        import comtypes.gen.UIAutomationClient as uiac
+        _auto = auto_mod
+        _uiaclient = uiac
+        _uia_ready = True
+        return True
+    except Exception:
+        return False
 
-def create_mini_icon(size: int = 24) -> QPixmap:
-    """Create a tiny ClipTray icon programmatically."""
+
+# ─────────────────────────────────────────────────────────
+#  Method 2 – UIA TextPattern2.GetCaretRange
+#  Works for WPF, UWP, some Win32 rich-edit controls.
+# ─────────────────────────────────────────────────────────
+def _get_caret_uia_tp2() -> Optional[Tuple[int, int]]:
+    """Use IUIAutomationTextPattern2.GetCaretRange for caret pos."""
+    if not _ensure_uia():
+        return None
+    try:
+        ctrl = _auto.GetFocusedControl()
+        if ctrl is None:
+            return None
+        elem = ctrl.Element
+        pat = elem.GetCurrentPattern(_TEXTPATTERN2_ID)
+        if not pat:
+            return None
+        tp2 = pat.QueryInterface(_uiaclient.IUIAutomationTextPattern2)
+        is_active = ctypes.c_int()
+        caret_range = tp2.GetCaretRange(ctypes.byref(is_active))
+        if caret_range and is_active.value:
+            rects = caret_range.GetBoundingRectangles()
+            if rects and len(rects) >= 4:
+                x, y, w, h = rects[0], rects[1], rects[2], rects[3]
+                return (int(x), int(y + h))
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────
+#  Method 3 – UIA TextPattern.GetSelection
+#  Works for Chromium / Electron (VS Code editor, chat,
+#  browser address bars, etc.)
+# ─────────────────────────────────────────────────────────
+def _get_caret_uia_selection() -> Optional[Tuple[int, int]]:
+    """Use TextPattern.GetSelection bounding rects as caret proxy."""
+    if not _ensure_uia():
+        return None
+    try:
+        ctrl = _auto.GetFocusedControl()
+        if ctrl is None:
+            return None
+        tp = ctrl.GetTextPattern()
+        if tp is None:
+            return None
+        sel = tp.GetSelection()
+        if sel:
+            for sr in sel:
+                rects = sr.GetBoundingRectangles()
+                if rects:
+                    # rects is a Rect or list — first rect is x,y,w,h
+                    if hasattr(rects, 'left'):
+                        # It's a single Rect object
+                        return (int(rects.left), int(rects.bottom))
+                    elif hasattr(rects, '__getitem__'):
+                        # Tuple/list  (x, y, w, h)
+                        x, y, w, h = rects[0], rects[1], rects[2], rects[3]
+                        return (int(x + w), int(y + h))
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────
+#  Method 4 – Focused control bounding rectangle
+#  Ultimate fallback: places the icon at the right edge
+#  of whichever control has focus (terminals, custom UIs).
+# ─────────────────────────────────────────────────────────
+# Set of UIA ControlType names considered "editable"
+_EDITABLE_TYPES = {"EditControl", "DocumentControl", "ComboBoxControl"}
+
+# Pattern IDs that indicate a control can accept text
+_EDITABLE_PATTERNS = {
+    10002,  # ValuePattern
+    10014,  # TextPattern
+    10024,  # TextPattern2
+    10032,  # TextEditPattern
+}
+
+
+def _get_caret_fallback() -> Optional[Tuple[int, int]]:
+    """Return bottom-right of the focused control if it looks editable."""
+    if not _ensure_uia():
+        return None
+    try:
+        ctrl = _auto.GetFocusedControl()
+        if ctrl is None:
+            return None
+        # Quick type check
+        if ctrl.ControlTypeName not in _EDITABLE_TYPES:
+            return None
+        r = ctrl.BoundingRectangle
+        if r.width() > 0 and r.height() > 0:
+            return (int(r.right), int(r.bottom))
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────
+#  Combined caret detection – tries all methods in order
+# ─────────────────────────────────────────────────────────
+def get_caret_screen_pos() -> Optional[Tuple[int, int]]:
+    """
+    Return (x, y) screen coordinates near the text caret,
+    trying every detection method.  Returns None when no
+    editable control appears to be focused.
+    """
+    # 1. Win32 – cheapest, most accurate for legacy apps
+    pos = _get_caret_win32()
+    if pos:
+        return pos
+    # 2. UIA TextPattern2.GetCaretRange
+    pos = _get_caret_uia_tp2()
+    if pos:
+        return pos
+    # 3. UIA TextPattern.GetSelection
+    pos = _get_caret_uia_selection()
+    if pos:
+        return pos
+    # 4. Focused control rect
+    pos = _get_caret_fallback()
+    if pos:
+        return pos
+    return None
+
+
+def _is_editable_focused() -> bool:
+    """Quick check: does the focused control look like a text input?"""
+    if not _ensure_uia():
+        return False
+    try:
+        ctrl = _auto.GetFocusedControl()
+        if ctrl is None:
+            return False
+        # Check control type name
+        if ctrl.ControlTypeName in _EDITABLE_TYPES:
+            return True
+        # Check if any editable pattern is present
+        elem = ctrl.Element
+        for pid in _EDITABLE_PATTERNS:
+            try:
+                if elem.GetCurrentPattern(pid):
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+# ─────────────────────────────────────────────────────────
+#  Mini clipboard icon (drawn programmatically)
+# ─────────────────────────────────────────────────────────
+def create_mini_icon(size: int = 22) -> QPixmap:
+    """Draw a tiny clipboard icon for the companion."""
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    # Gradient background circle
-    gradient = QRadialGradient(size / 2, size / 2, size / 2)
-    gradient.setColorAt(0, QColor(108, 142, 255))
-    gradient.setColorAt(1, QColor(80, 110, 220))
-    painter.setBrush(QBrush(gradient))
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawRoundedRect(1, 1, size - 2, size - 2, 6, 6)
-
-    # Clipboard lines (simplified icon)
-    painter.setPen(QPen(QColor(255, 255, 255, 220), 1.5))
-    mid = size // 2
-    for dy in [-3, 0, 3]:
-        w = 8 if dy < 3 else 5
-        painter.drawLine(mid - w // 2, mid + dy, mid + w // 2, mid + dy)
-
-    painter.end()
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    # Blue rounded rect background
+    p.setBrush(QColor(108, 142, 255))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(1, 1, size - 2, size - 2, 5, 5)
+    # White lines (clipboard content)
+    pen = QPen(QColor(255, 255, 255))
+    pen.setWidthF(1.4)
+    p.setPen(pen)
+    margin = size // 4
+    for i in range(3):
+        y = margin + i * 4
+        if y < size - margin:
+            p.drawLine(margin, y, size - margin, y)
+    p.end()
     return pixmap
 
 
+# ─────────────────────────────────────────────────────────
+#  CaretCompanionIcon – the tiny floating widget
+# ─────────────────────────────────────────────────────────
 class CaretCompanionIcon(QWidget):
     """
-    A tiny floating icon that appears near the caret.
-    Clicking it opens the ClipTray overlay.
+    A small always-on-top frameless widget that follows the caret.
+    Clicking it emits *clicked* so the overlay can open.
     """
     clicked = pyqtSignal()
 
     ICON_SIZE = 22
-    FADE_TIMEOUT_MS = 4000  # Hide after 4 seconds of no caret movement
+    OFFSET_X  = 6     # px to the right of the caret
+    OFFSET_Y  = 4     # px below the caret
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
+            Qt.WindowType.ToolTip
+            | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
             | Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(self.ICON_SIZE + 4, self.ICON_SIZE + 4)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Icon label
-        self._icon_pixmap = create_mini_icon(self.ICON_SIZE)
-        self._label = QLabel(self)
-        self._label.setPixmap(self._icon_pixmap)
-        self._label.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
-        self._label.move(2, 2)
+        self._icon_label = QLabel(self)
+        self._icon_label.setPixmap(create_mini_icon(self.ICON_SIZE))
+        self._icon_label.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
 
-        # Subtle shadow
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(8)
-        shadow.setOffset(0, 2)
-        shadow.setColor(QColor(0, 0, 0, 80))
-        self.setGraphicsEffect(shadow)
+        # Fade-out animation
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+        self._opacity = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity)
+        self._opacity.setOpacity(0.92)
 
-        # Fade-out timer
+        self._fade_anim = QPropertyAnimation(self._opacity, b"opacity")
+        self._fade_anim.setDuration(600)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.InQuad)
+
+    # ── public helpers ──
+    def move_near_caret(self, x: int, y: int):
+        """Reposition to (x + offset, y + offset)."""
+        self.move(x + self.OFFSET_X, y + self.OFFSET_Y)
+
+    def fade_out(self):
+        """Start a smooth fade-out, then hide."""
+        if not self.isVisible():
+            return
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(self._opacity.opacity())
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.finished.connect(self._on_fade_done)
+        self._fade_anim.start()
+
+    def show_icon(self):
+        """Show with full opacity."""
+        self._fade_anim.stop()
+        self._opacity.setOpacity(0.92)
+        self.show()
+
+    # ── internals ──
+    def _on_fade_done(self):
+        self._fade_anim.finished.disconnect(self._on_fade_done)
+        self.hide()
+        self._opacity.setOpacity(0.92)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(ev)
+
+
+# ─────────────────────────────────────────────────────────
+#  CaretSignalBridge – thread-safe Qt signal relay
+# ─────────────────────────────────────────────────────────
+class CaretSignalBridge(QObject):
+    """Emits *key_pressed* from a background pynput thread."""
+    key_pressed = pyqtSignal()
+
+
+# ─────────────────────────────────────────────────────────
+#  CaretCompanion – main manager
+# ─────────────────────────────────────────────────────────
+class CaretCompanion(QObject):
+    """
+    Manages the floating icon lifecycle:
+      • Starts / stops a global keyboard listener (pynput)
+      • On each keypress, polls the caret position via a QTimer
+      • Shows / hides / repositions the CaretCompanionIcon
+      • Fades the icon out after a few seconds of inactivity
+    """
+    open_requested = pyqtSignal()   # user clicked the companion icon
+
+    _POLL_INTERVAL   = 120   # ms between caret-position polls
+    _FADE_DELAY      = 4000  # ms before auto-fade
+    _ACTIVITY_WINDOW = 400   # ms — treat repeated keys as one burst
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._enabled = False
+        self._icon: Optional[CaretCompanionIcon] = None
+        self._bridge = CaretSignalBridge()
+        self._bridge.key_pressed.connect(self._on_key_activity)
+
+        # Keyboard listener (pynput) — created on enable
+        self._kb_listener = None
+
+        # Polling timer — fires while icon is visible
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self._POLL_INTERVAL)
+        self._poll_timer.timeout.connect(self._poll_caret)
+
+        # Fade timer — hides icon after inactivity
         self._fade_timer = QTimer(self)
         self._fade_timer.setSingleShot(True)
-        self._fade_timer.timeout.connect(self._fade_out)
+        self._fade_timer.setInterval(self._FADE_DELAY)
+        self._fade_timer.timeout.connect(self._start_fade)
 
-        self._opacity = 1.0
-        self._last_pos = None
+        # Last known caret pos  (to detect movement)
+        self._last_pos: Optional[Tuple[int, int]] = None
 
-    def show_at(self, x: int, y: int, caret_h: int):
-        """Position the icon to the right of the caret and show it."""
-        new_pos = QPoint(x + 6, y + caret_h - self.ICON_SIZE // 2)
-
-        # Don't flicker if position barely changed
-        if self._last_pos and abs(new_pos.x() - self._last_pos.x()) < 3 \
-                and abs(new_pos.y() - self._last_pos.y()) < 3:
-            self._restart_fade_timer()
+    # ── public API ──────────────────────────────────────
+    def set_enabled(self, on: bool):
+        if on == self._enabled:
             return
+        self._enabled = on
+        if on:
+            self._start_listener()
+        else:
+            self._stop_listener()
+            self.hide_icon()
 
-        self._last_pos = new_pos
+    def hide_icon(self):
+        """Immediately hide the icon (e.g. when overlay opens)."""
+        self._poll_timer.stop()
+        self._fade_timer.stop()
+        if self._icon:
+            self._icon.hide()
+
+    # ── keyboard listener ───────────────────────────────
+    def _start_listener(self):
+        if self._kb_listener is not None:
+            return
+        try:
+            from pynput.keyboard import Listener
+            self._kb_listener = Listener(on_press=self._on_kb_press)
+            self._kb_listener.daemon = True
+            self._kb_listener.start()
+        except Exception:
+            pass
+
+    def _stop_listener(self):
+        if self._kb_listener is not None:
+            try:
+                self._kb_listener.stop()
+            except Exception:
+                pass
+            self._kb_listener = None
+
+    def _on_kb_press(self, key):
+        """Called from pynput thread — relay via signal bridge."""
+        try:
+            self._bridge.key_pressed.emit()
+        except Exception:
+            pass
+
+    # ── activity handling (runs on Qt main thread) ──────
+    def _on_key_activity(self):
+        if not self._enabled:
+            return
+        # Reset fade timer
+        self._fade_timer.stop()
+        self._fade_timer.start()
+        # Start polling if not already
+        if not self._poll_timer.isActive():
+            self._poll_caret()           # immediate first poll
+            self._poll_timer.start()
+
+    # ── caret polling ───────────────────────────────────
+    def _poll_caret(self):
+        pos = get_caret_screen_pos()
+        if pos is None:
+            # No caret found — hide and stop polling
+            self._poll_timer.stop()
+            self._fade_timer.stop()
+            if self._icon and self._icon.isVisible():
+                self._icon.fade_out()
+            return
 
         # Clamp to screen bounds
         screen = QApplication.primaryScreen()
         if screen:
-            geo = screen.availableGeometry()
-            nx = min(new_pos.x(), geo.right() - self.width() - 4)
-            ny = min(new_pos.y(), geo.bottom() - self.height() - 4)
-            nx = max(nx, geo.left())
-            ny = max(ny, geo.top())
-            new_pos = QPoint(nx, ny)
+            geom = screen.availableGeometry()
+            x = min(pos[0], geom.right() - 30)
+            y = min(pos[1], geom.bottom() - 30)
+            x = max(x, geom.left())
+            y = max(y, geom.top())
+            pos = (x, y)
 
-        self.move(new_pos)
-        self._opacity = 1.0
-        self.setWindowOpacity(1.0)
-        if not self.isVisible():
-            self.show()
+        self._last_pos = pos
+        self._ensure_icon()
+        self._icon.move_near_caret(pos[0], pos[1])
+        if not self._icon.isVisible():
+            self._icon.show_icon()
 
-        self._restart_fade_timer()
-
-    def _restart_fade_timer(self):
-        self._fade_timer.stop()
-        self._fade_timer.start(self.FADE_TIMEOUT_MS)
-
-    def _fade_out(self):
-        """Gradually fade out and hide."""
-        self._opacity -= 0.15
-        if self._opacity <= 0:
-            self.hide()
-            self._opacity = 1.0
-            self._last_pos = None
-        else:
-            self.setWindowOpacity(self._opacity)
-            QTimer.singleShot(40, self._fade_out)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.hide()
-            self._last_pos = None
-            self._fade_timer.stop()
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-    def force_hide(self):
-        """Immediately hide without fade."""
-        self._fade_timer.stop()
-        self.hide()
-        self._last_pos = None
-
-
-class CaretCompanion(QObject):
-    """
-    Manages the caret companion feature.
-    Polls the caret position periodically and shows/hides the floating icon.
-    Uses a keyboard listener to only poll when the user is actively typing.
-    """
-    open_requested = pyqtSignal()  # User clicked the companion icon
-
-    POLL_INTERVAL_MS = 300   # How often to check caret position when typing
-    IDLE_TIMEOUT_MS = 3000   # Stop polling after this much idle time
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._enabled = False
-        self._icon = None
-        self._poll_timer = None
-        self._idle_timer = None
-        self._keyboard_listener = None
-        self._typing_active = False
-        self._bridge = CaretSignalBridge()
-        self._bridge.caret_moved.connect(self._on_caret_moved)
-        self._bridge.caret_lost.connect(self._on_caret_lost)
-
-    def set_enabled(self, enabled: bool):
-        """Enable or disable the caret companion."""
-        if enabled == self._enabled:
-            return
-        self._enabled = enabled
-        if enabled:
-            self._start()
-        else:
-            self._stop()
-
-    def _start(self):
-        """Start the caret companion system."""
-        # Create the floating icon
-        self._icon = CaretCompanionIcon()
-        self._icon.clicked.connect(self._on_icon_clicked)
-
-        # Create poll timer (runs on main thread)
-        self._poll_timer = QTimer()
-        self._poll_timer.timeout.connect(self._poll_caret)
-        # Don't start polling yet — wait for keyboard activity
-
-        # Create idle timer
-        self._idle_timer = QTimer()
-        self._idle_timer.setSingleShot(True)
-        self._idle_timer.timeout.connect(self._on_idle)
-
-        # Start keyboard listener
-        self._start_keyboard_listener()
-
-    def _stop(self):
-        """Stop everything."""
-        self._stop_keyboard_listener()
-
-        if self._poll_timer:
-            self._poll_timer.stop()
-            self._poll_timer = None
-
-        if self._idle_timer:
-            self._idle_timer.stop()
-            self._idle_timer = None
-
+    def _start_fade(self):
+        """Fade timer expired — hide the icon smoothly."""
+        self._poll_timer.stop()
         if self._icon:
-            self._icon.force_hide()
-            self._icon.deleteLater()
-            self._icon = None
+            self._icon.fade_out()
 
-        self._typing_active = False
-
-    def _start_keyboard_listener(self):
-        """Start listening for keyboard activity using pynput."""
-        self._stop_keyboard_listener()
-        try:
-            from pynput import keyboard
-
-            def on_key_press(key):
-                if self._enabled:
-                    self._bridge.caret_moved.emit(0, 0, 0)  # Signal to start polling
-
-            self._keyboard_listener = keyboard.Listener(on_press=on_key_press)
-            self._keyboard_listener.daemon = True
-            self._keyboard_listener.start()
-        except ImportError:
-            # pynput not available, fall back to continuous polling
-            if self._poll_timer:
-                self._poll_timer.start(self.POLL_INTERVAL_MS)
-
-    def _stop_keyboard_listener(self):
-        if self._keyboard_listener:
-            try:
-                self._keyboard_listener.stop()
-            except Exception:
-                pass
-            self._keyboard_listener = None
-
-    def _on_caret_moved(self, x, y, h):
-        """Called from keyboard listener — a key was pressed, start/continue polling."""
-        if not self._enabled:
-            return
-
-        # Reset idle timer
-        if self._idle_timer:
-            self._idle_timer.stop()
-            self._idle_timer.start(self.IDLE_TIMEOUT_MS)
-
-        # Start poll timer if not running
-        if self._poll_timer and not self._poll_timer.isActive():
-            self._poll_timer.start(self.POLL_INTERVAL_MS)
-            # Also do an immediate poll
-            QTimer.singleShot(80, self._poll_caret)
-
-    def _on_idle(self):
-        """User stopped typing — stop polling and fade out icon."""
-        if self._poll_timer:
-            self._poll_timer.stop()
-        if self._icon:
-            self._icon.force_hide()
-
-    def _poll_caret(self):
-        """Check the current caret position and update the icon."""
-        if not self._enabled or not self._icon:
-            return
-
-        pos = get_caret_screen_pos()
-        if pos:
-            x, y, h = pos
-            self._icon.show_at(x, y, h)
-        else:
-            # No caret found — hide if visible
-            if self._icon.isVisible():
-                self._icon.force_hide()
-
-    def _on_caret_lost(self):
-        if self._icon:
-            self._icon.force_hide()
+    # ── icon lifecycle ──────────────────────────────────
+    def _ensure_icon(self):
+        if self._icon is None:
+            self._icon = CaretCompanionIcon()
+            self._icon.clicked.connect(self._on_icon_clicked)
 
     def _on_icon_clicked(self):
-        """User clicked the companion icon — open ClipTray."""
+        self.hide_icon()
         self.open_requested.emit()
-
-    def hide_icon(self):
-        """Hide the icon (e.g. when overlay is opening)."""
-        if self._icon:
-            self._icon.force_hide()
