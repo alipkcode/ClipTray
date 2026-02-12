@@ -16,6 +16,8 @@ from PyQt6.QtGui import QColor, QCursor, QScreen
 from clip_manager import ClipManager
 from clip_widgets import ClipCard
 from add_dialog import AddEditDialog
+from settings_dialog import SettingsDialog
+from settings_manager import SettingsManager
 from styles import get_stylesheet
 
 
@@ -30,11 +32,15 @@ class OverlayWindow(QWidget):
 
     # Signal emitted when user selects a clip to type
     type_clip = pyqtSignal(str)  # clip text
+    # Signal emitted when click-to-paste mode: user selects a clip, wait for click
+    wait_and_type_clip = pyqtSignal(str)  # clip text
 
-    def __init__(self, clip_manager: ClipManager, parent=None):
+    def __init__(self, clip_manager: ClipManager, settings: SettingsManager = None, parent=None):
         super().__init__(parent)
         self.clip_manager = clip_manager
+        self.settings = settings or SettingsManager()
         self.dialog = None  # Active add/edit dialog
+        self.settings_dialog = None  # Active settings dialog
 
         # ── Window setup ──
         self.setWindowFlags(
@@ -98,6 +104,14 @@ class OverlayWindow(QWidget):
 
         title_bar.addLayout(title_col)
         title_bar.addStretch()
+
+        # Settings button
+        settings_btn = QPushButton("⚙")
+        settings_btn.setObjectName("SettingsButton")
+        settings_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        settings_btn.setToolTip("Settings")
+        settings_btn.clicked.connect(self._on_settings)
+        title_bar.addWidget(settings_btn, alignment=Qt.AlignmentFlag.AlignTop)
 
         close_btn = QPushButton("✕")
         close_btn.setObjectName("CloseButton")
@@ -182,6 +196,10 @@ class OverlayWindow(QWidget):
             self.dialog.hide()
             self.dialog.deleteLater()
             self.dialog = None
+        if self.settings_dialog:
+            self.settings_dialog.hide()
+            self.settings_dialog.deleteLater()
+            self.settings_dialog = None
         self.hide()
 
     # ── Clip List ────────────────────────────────────────────
@@ -246,12 +264,16 @@ class OverlayWindow(QWidget):
         self._refresh_clips(text)
 
     def _on_clip_clicked(self, clip_id: str):
-        """User clicked a clip — type it into their active field."""
+        """User clicked a clip — type it or wait for click depending on setting."""
         clip = self.clip_manager.get_clip(clip_id)
         if clip:
             self.hide_overlay()
-            # Small delay to let the overlay close and focus return
-            QTimer.singleShot(300, lambda: self.type_clip.emit(clip.text))
+            if self.settings.click_to_paste:
+                # Click-to-Paste mode: emit wait signal
+                QTimer.singleShot(200, lambda: self.wait_and_type_clip.emit(clip.text))
+            else:
+                # Immediate mode: paste right away
+                QTimer.singleShot(300, lambda: self.type_clip.emit(clip.text))
 
     def _on_add(self):
         """Open the add clip dialog."""
@@ -268,6 +290,24 @@ class OverlayWindow(QWidget):
         self.clip_manager.delete_clip(clip_id)
         query = self.search_input.text().strip()
         self._refresh_clips(query)
+
+    def _on_settings(self):
+        """Open the settings dialog."""
+        if self.settings_dialog:
+            self.settings_dialog.deleteLater()
+
+        self.settings_dialog = SettingsDialog(settings=self.settings, parent=self)
+        self.settings_dialog.closed.connect(self._on_settings_closed)
+        self.settings_dialog.setGeometry(self.rect())
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+
+    def _on_settings_closed(self):
+        """Handle settings dialog close."""
+        if self.settings_dialog:
+            self.settings_dialog.hide()
+            self.settings_dialog.deleteLater()
+            self.settings_dialog = None
 
     def _open_dialog(self, clip=None):
         """Show the add/edit dialog overlaid on the panel."""
@@ -323,7 +363,9 @@ class OverlayWindow(QWidget):
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts."""
         if event.key() == Qt.Key.Key_Escape:
-            if self.dialog:
+            if self.settings_dialog:
+                self._on_settings_closed()
+            elif self.dialog:
                 self._on_dialog_cancelled()
             else:
                 self.hide_overlay()
@@ -332,7 +374,12 @@ class OverlayWindow(QWidget):
     def mousePressEvent(self, event):
         """Close when clicking outside the panel."""
         # Check if click is outside the panel
-        if self.dialog:
+        if self.settings_dialog:
+            if not self.settings_dialog.panel.geometry().contains(
+                self.settings_dialog.mapFromParent(event.pos())
+            ):
+                self._on_settings_closed()
+        elif self.dialog:
             if not self.dialog.panel.geometry().contains(
                 self.dialog.mapFromParent(event.pos())
             ):

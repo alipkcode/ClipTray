@@ -297,4 +297,69 @@ def get_stylesheet() -> str:
         max-width: 24px;
         max-height: 24px;
     }
+
+    /* ── Settings Button ─────────────────────────────────── */
+    #SettingsButton {
+        background-color: rgba(255, 255, 255, 0.05);
+        border: none;
+        border-radius: 8px;
+        color: #6C7086;
+        font-size: 17px;
+        padding: 4px;
+        min-width: 32px;
+        min-height: 32px;
+        max-width: 32px;
+        max-height: 32px;
+    }
+    #SettingsButton:hover {
+        background-color: rgba(108, 142, 255, 0.15);
+        color: #6C8EFF;
+    }
+
+    /* ── Settings Dialog Items ───────────────────────────── */
+    #SettingsItemTitle {
+        color: #CDD6F4;
+        font-size: 15px;
+        font-weight: 600;
+    }
+
+    #SettingsItemDesc {
+        color: #6C7086;
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 1.4;
+    }
+
+    #SettingsStatusLabel {
+        color: #6C7086;
+        font-size: 11px;
+    }
+
+    /* ── Waiting Indicator (floating badge) ──────────────── */
+    #WaitingBadge {
+        background-color: #1E1E2E;
+        border: 1px solid rgba(108, 142, 255, 0.3);
+        border-radius: 12px;
+    }
+    #WaitingBadgeText {
+        color: #6C8EFF;
+        font-size: 13px;
+        font-weight: 500;
+    }
+    #WaitingBadgeHint {
+        color: #6C7086;
+        font-size: 11px;
+    }
+    #WaitingCancelBtn {
+        background-color: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        color: #A6ADC8;
+        font-size: 12px;
+        padding: 4px 14px;
+    }
+    #WaitingCancelBtn:hover {
+        background-color: rgba(255, 80, 80, 0.15);
+        color: #FF6C6C;
+    }
     """

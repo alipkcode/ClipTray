@@ -3,20 +3,28 @@ ClipTray - Main Entry Point
 Creates the system tray icon and manages the application lifecycle.
 When the user clicks the tray icon, it shows the overlay.
 When a clip is selected, it types the text into the active window using pyautogui.
+Supports Click-to-Paste mode: waits for user to click a text field first.
 """
 
 import sys
 import os
 import time
+import threading
 
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QIcon, QPixmap, QAction, QPainter, QColor, QFont
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import (
+    QApplication, QSystemTrayIcon, QMenu,
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
+    QGraphicsDropShadowEffect
+)
+from PyQt6.QtGui import QIcon, QPixmap, QAction, QPainter, QColor, QFont, QCursor
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 
 import pyautogui
 
 from clip_manager import ClipManager
+from settings_manager import SettingsManager
 from overlay import OverlayWindow
+from splash import SplashOverlay
 
 
 # ── Disable pyautogui fail-safe for smoother operation ──
@@ -123,6 +131,85 @@ def _restore_clipboard(old_text: str):
         pass
 
 
+class ClickSignalBridge(QObject):
+    """Bridge to safely emit Qt signals from a background pynput thread."""
+    click_detected = pyqtSignal()
+
+
+class WaitingBadge(QWidget):
+    """
+    A small floating badge that tells the user ClipTray is waiting
+    for them to click on a text field. Includes a Cancel button.
+    """
+    cancelled = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(340, 70)
+
+        self._build_ui()
+        self._position_bottom_center()
+
+    def _build_ui(self):
+        panel = QWidget(self)
+        panel.setObjectName("WaitingBadge")
+        panel.setGeometry(0, 0, 340, 70)
+
+        shadow = QGraphicsDropShadowEffect(panel)
+        shadow.setBlurRadius(30)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 100))
+        panel.setGraphicsEffect(shadow)
+
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(12)
+
+        # Pulsing dot indicator
+        dot = QLabel("●")
+        dot.setStyleSheet("color: #6C8EFF; font-size: 16px;")
+        layout.addWidget(dot)
+
+        # Text
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+
+        title = QLabel("Click on a text field...")
+        title.setObjectName("WaitingBadgeText")
+        text_col.addWidget(title)
+
+        hint = QLabel("ClipTray will paste when you click")
+        hint.setObjectName("WaitingBadgeHint")
+        text_col.addWidget(hint)
+
+        layout.addLayout(text_col, 1)
+
+        # Cancel button
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("WaitingCancelBtn")
+        cancel_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        cancel_btn.clicked.connect(self._on_cancel)
+        layout.addWidget(cancel_btn)
+
+    def _position_bottom_center(self):
+        """Position the badge at the bottom center of the screen."""
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            x = geo.x() + (geo.width() - self.width()) // 2
+            y = geo.y() + geo.height() - self.height() - 40
+            self.move(x, y)
+
+    def _on_cancel(self):
+        self.cancelled.emit()
+
+
 class ClipTrayApp:
     """Main application class that orchestrates everything."""
 
@@ -134,6 +221,14 @@ class ClipTrayApp:
 
         # ── Data ──
         self.clip_manager = ClipManager()
+        self.settings = SettingsManager()
+
+        # ── Click-to-paste state ──
+        self._waiting_text = None       # Text waiting to be pasted
+        self._mouse_listener = None     # pynput listener thread
+        self._waiting_badge = None      # Floating badge widget
+        self._click_bridge = ClickSignalBridge()
+        self._click_bridge.click_detected.connect(self._on_global_click)
 
         # ── Tray Icon ──
         self.tray_icon = QSystemTrayIcon()
@@ -157,11 +252,25 @@ class ClipTrayApp:
         self.tray_icon.setContextMenu(menu)
 
         # ── Overlay Window ──
-        self.overlay = OverlayWindow(self.clip_manager)
+        self.overlay = OverlayWindow(self.clip_manager, self.settings)
         self.overlay.type_clip.connect(self._on_type_clip)
+        self.overlay.wait_and_type_clip.connect(self._on_wait_and_type_clip)
+
+        # Import stylesheet for badge
+        from styles import get_stylesheet
+        self._badge_stylesheet = get_stylesheet()
 
         # ── Show tray ──
         self.tray_icon.show()
+
+        # ── Welcome splash on startup ──
+        self.splash = SplashOverlay()
+        self.splash.finished.connect(self._on_splash_done)
+        self.splash.start()
+
+    def _on_splash_done(self):
+        """Splash animation finished — app is ready in the tray."""
+        self.splash = None
 
     def _on_tray_activated(self, reason):
         """Handle tray icon clicks."""
@@ -179,13 +288,85 @@ class ClipTrayApp:
         self.overlay.show_overlay()
 
     def _on_type_clip(self, text: str):
-        """Handle clip selection — type the text into the active field."""
+        """Handle clip selection — type the text into the active field (immediate mode)."""
         # Give time for focus to return to the previous window
         time.sleep(0.15)
         type_text(text)
 
+    def _on_wait_and_type_clip(self, text: str):
+        """Handle clip selection in Click-to-Paste mode — wait for user click."""
+        self._waiting_text = text
+        self._show_waiting_badge()
+        self._start_click_listener()
+
+    def _show_waiting_badge(self):
+        """Show the floating indicator that we're waiting for a click."""
+        if self._waiting_badge:
+            self._waiting_badge.hide()
+            self._waiting_badge.deleteLater()
+
+        self._waiting_badge = WaitingBadge()
+        self._waiting_badge.setStyleSheet(self._badge_stylesheet)
+        self._waiting_badge.cancelled.connect(self._cancel_waiting)
+        self._waiting_badge.show()
+
+    def _hide_waiting_badge(self):
+        """Hide and clean up the waiting badge."""
+        if self._waiting_badge:
+            self._waiting_badge.hide()
+            self._waiting_badge.deleteLater()
+            self._waiting_badge = None
+
+    def _start_click_listener(self):
+        """Start a global mouse listener that waits for the next click."""
+        self._stop_click_listener()  # Clean up any existing listener
+
+        try:
+            from pynput import mouse
+
+            def on_click(x, y, button, pressed):
+                if pressed and button == mouse.Button.left:
+                    # Emit signal from background thread to Qt main thread
+                    self._click_bridge.click_detected.emit()
+                    return False  # Stop the listener
+
+            self._mouse_listener = mouse.Listener(on_click=on_click)
+            self._mouse_listener.start()
+        except ImportError:
+            # pynput not available — fall back to a simple timer approach
+            print("[ClipTray] pynput not found, using timer fallback")
+            QTimer.singleShot(2000, self._on_global_click)
+
+    def _stop_click_listener(self):
+        """Stop the global mouse listener if running."""
+        if self._mouse_listener:
+            try:
+                self._mouse_listener.stop()
+            except Exception:
+                pass
+            self._mouse_listener = None
+
+    def _on_global_click(self):
+        """Called when a global mouse click is detected — paste the waiting text."""
+        self._stop_click_listener()
+        self._hide_waiting_badge()
+
+        if self._waiting_text:
+            text = self._waiting_text
+            self._waiting_text = None
+            # Small delay to let the click register in the target field
+            QTimer.singleShot(150, lambda: type_text(text))
+
+    def _cancel_waiting(self):
+        """User cancelled the click-to-paste wait."""
+        self._stop_click_listener()
+        self._hide_waiting_badge()
+        self._waiting_text = None
+
     def _quit(self):
         """Clean exit."""
+        self._stop_click_listener()
+        self._hide_waiting_badge()
         self.tray_icon.hide()
         self.app.quit()
 
