@@ -18,71 +18,55 @@ from macro_builder import MacroBuilder
 
 
 class MacroToggle(QWidget):
-    """A compact toggle for switching between simple text and macro mode."""
+    """
+    A polished segmented toggle between 'Simple Text' and 'Macro Mode'.
+    Two side-by-side pill buttons inside a rounded container.
+    """
     toggled = pyqtSignal(bool)
 
     def __init__(self, checked=False, parent=None):
         super().__init__(parent)
         self._checked = checked
-        self.setFixedHeight(32)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setFixedHeight(42)
+        self.setObjectName("MacroToggleOuter")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(3)
 
-        self.icon_label = QLabel()
-        self.icon_label.setStyleSheet("font-size: 14px; background: transparent; border: none;")
-        layout.addWidget(self.icon_label)
+        self.btn_simple = QPushButton("\U0001f4dd  Simple Text")
+        self.btn_simple.setObjectName("MacroSegBtn")
+        self.btn_simple.setCheckable(True)
+        self.btn_simple.setChecked(not checked)
+        self.btn_simple.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_simple.clicked.connect(lambda: self._select(False))
+        layout.addWidget(self.btn_simple, 1)
 
-        self.text_label = QLabel()
-        layout.addWidget(self.text_label)
+        self.btn_macro = QPushButton("\u26a1  Macro Mode")
+        self.btn_macro.setObjectName("MacroSegBtn")
+        self.btn_macro.setCheckable(True)
+        self.btn_macro.setChecked(checked)
+        self.btn_macro.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_macro.clicked.connect(lambda: self._select(True))
+        layout.addWidget(self.btn_macro, 1)
 
-        layout.addStretch()
-
-        self.toggle_btn = QPushButton()
-        self.toggle_btn.setFixedSize(44, 24)
-        self.toggle_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.toggle_btn.clicked.connect(self._on_toggle)
-        layout.addWidget(self.toggle_btn)
-
-        self._update_visual()
-
-    def _on_toggle(self):
-        self._checked = not self._checked
-        self._update_visual()
-        self.toggled.emit(self._checked)
+    def _select(self, is_macro: bool):
+        if is_macro == self._checked:
+            self.btn_simple.setChecked(not self._checked)
+            self.btn_macro.setChecked(self._checked)
+            return
+        self._checked = is_macro
+        self.btn_simple.setChecked(not is_macro)
+        self.btn_macro.setChecked(is_macro)
+        self.toggled.emit(is_macro)
 
     def isChecked(self):
         return self._checked
 
-    def _update_visual(self):
-        if self._checked:
-            self.icon_label.setText("\u26a1")
-            self.text_label.setText("Macro Mode")
-            self.text_label.setStyleSheet(
-                "color: #6C8EFF; font-size: 13px; font-weight: 600; background: transparent; border: none;"
-            )
-            self.toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #6C8EFF;
-                    border: none;
-                    border-radius: 12px;
-                }
-            """)
-        else:
-            self.icon_label.setText("\U0001f4dd")
-            self.text_label.setText("Simple Text")
-            self.text_label.setStyleSheet(
-                "color: #6C7086; font-size: 13px; font-weight: 500; background: transparent; border: none;"
-            )
-            self.toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #45475A;
-                    border: none;
-                    border-radius: 12px;
-                }
-            """)
+    def setChecked(self, val: bool):
+        self._checked = val
+        self.btn_simple.setChecked(not val)
+        self.btn_macro.setChecked(val)
 
 
 class AddEditDialog(QWidget):
@@ -92,18 +76,12 @@ class AddEditDialog(QWidget):
     Supports both simple text mode and macro mode (text + keyboard actions).
     """
 
-    # Signals
-    saved = pyqtSignal()       # Emitted after save — parent should refresh
-    cancelled = pyqtSignal()   # Emitted on cancel
+    saved = pyqtSignal()
+    cancelled = pyqtSignal()
 
     COLORS = ClipManager.COLORS
 
     def __init__(self, parent=None, clip=None):
-        """
-        Args:
-            parent: Parent widget (the overlay).
-            clip: If provided, edit this clip. Otherwise create a new one.
-        """
         super().__init__(parent)
         self.clip = clip
         self.selected_color = clip.color if clip else self.COLORS[0]
@@ -117,7 +95,6 @@ class AddEditDialog(QWidget):
 
     def _build_ui(self):
         """Construct the dialog UI."""
-        # Full-size overlay container
         overlay_layout = QVBoxLayout(self)
         overlay_layout.setContentsMargins(0, 0, 0, 0)
         overlay_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -126,7 +103,7 @@ class AddEditDialog(QWidget):
         self.panel = QWidget()
         self.panel.setObjectName("DialogPanel")
         self.panel.setFixedWidth(480)
-        self.panel.setMaximumHeight(650)
+        self.panel.setMaximumHeight(680)
 
         shadow = QGraphicsDropShadowEffect(self.panel)
         shadow.setBlurRadius(40)
@@ -138,13 +115,13 @@ class AddEditDialog(QWidget):
         panel_layout.setContentsMargins(28, 24, 28, 24)
         panel_layout.setSpacing(14)
 
-        # \u2500\u2500 Title \u2500\u2500
+        # -- Title --
         title_text = "Edit Clip" if self.clip else "New Clip"
         title = QLabel(title_text)
         title.setObjectName("DialogTitle")
         panel_layout.addWidget(title)
 
-        # \u2500\u2500 Clip Title Input \u2500\u2500
+        # -- Clip Title Input --
         lbl_title = QLabel("Title")
         lbl_title.setObjectName("DialogLabel")
         panel_layout.addWidget(lbl_title)
@@ -155,14 +132,14 @@ class AddEditDialog(QWidget):
         self.title_input.setMaxLength(100)
         panel_layout.addWidget(self.title_input)
 
-        # \u2500\u2500 Macro Mode Toggle \u2500\u2500
+        # -- Macro Mode Toggle (segmented) --
         self.macro_toggle = MacroToggle(
             checked=(self.clip.is_macro if self.clip else False)
         )
         self.macro_toggle.toggled.connect(self._on_macro_toggled)
         panel_layout.addWidget(self.macro_toggle)
 
-        # \u2500\u2500 Simple Text Input (visible when macro mode is OFF) \u2500\u2500
+        # -- Simple Text Input (visible when macro mode OFF) --
         self.simple_text_container = QWidget()
         simple_layout = QVBoxLayout(self.simple_text_container)
         simple_layout.setContentsMargins(0, 0, 0, 0)
@@ -181,30 +158,24 @@ class AddEditDialog(QWidget):
 
         panel_layout.addWidget(self.simple_text_container)
 
-        # \u2500\u2500 Macro Builder (visible when macro mode is ON) \u2500\u2500
+        # -- Macro Builder (visible when macro mode ON) --
         self.macro_container = QWidget()
+        self.macro_container.setObjectName("MacroSection")
         macro_layout = QVBoxLayout(self.macro_container)
         macro_layout.setContentsMargins(0, 0, 0, 0)
-        macro_layout.setSpacing(6)
+        macro_layout.setSpacing(8)
 
-        macro_header = QHBoxLayout()
-        lbl_macro = QLabel("Build your macro")
-        lbl_macro.setObjectName("DialogLabel")
-        macro_header.addWidget(lbl_macro)
-
-        macro_hint = QLabel("Add text and keyboard actions in sequence")
-        macro_hint.setStyleSheet("color: #45475A; font-size: 11px; background: transparent; border: none;")
-        macro_header.addStretch()
-        macro_header.addWidget(macro_hint)
-        macro_layout.addLayout(macro_header)
+        macro_hint = QLabel("Build a sequence of text blocks and keyboard actions")
+        macro_hint.setObjectName("MacroHint")
+        macro_layout.addWidget(macro_hint)
 
         self.macro_builder = MacroBuilder()
         macro_layout.addWidget(self.macro_builder)
 
         panel_layout.addWidget(self.macro_container)
-        self.macro_container.hide()  # Hidden by default
+        self.macro_container.hide()
 
-        # \u2500\u2500 Color Picker \u2500\u2500
+        # -- Color Picker --
         lbl_color = QLabel("Accent Color")
         lbl_color.setObjectName("DialogLabel")
         panel_layout.addWidget(lbl_color)
@@ -225,7 +196,7 @@ class AddEditDialog(QWidget):
 
         panel_layout.addLayout(color_layout)
 
-        # \u2500\u2500 Buttons \u2500\u2500
+        # -- Buttons --
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         btn_layout.addStretch()
@@ -253,8 +224,7 @@ class AddEditDialog(QWidget):
             self.text_input.setPlainText(self.clip.text)
 
             if self.clip.is_macro and self.clip.steps:
-                self.macro_toggle._checked = True
-                self.macro_toggle._update_visual()
+                self.macro_toggle.setChecked(True)
                 self.macro_builder.set_steps(self.clip.steps)
                 self.simple_text_container.hide()
                 self.macro_container.show()
@@ -262,7 +232,6 @@ class AddEditDialog(QWidget):
     def _on_macro_toggled(self, is_macro: bool):
         """Toggle between simple text and macro mode."""
         if is_macro:
-            # Switching to macro mode \u2014 pre-fill with current text
             current_text = self.text_input.toPlainText().strip()
             if current_text and not self.macro_builder.steps[0].value:
                 self.macro_builder.steps[0].value = current_text
@@ -270,7 +239,6 @@ class AddEditDialog(QWidget):
             self.simple_text_container.hide()
             self.macro_container.show()
         else:
-            # Switching to simple text
             plain = self.macro_builder.get_plain_text()
             if plain and not self.text_input.toPlainText().strip():
                 self.text_input.setPlainText(plain)
@@ -307,7 +275,6 @@ class AddEditDialog(QWidget):
 
         if is_macro:
             steps = self.macro_builder.get_steps()
-            # Build plain text from text steps for preview
             text_parts = []
             for s in steps:
                 if isinstance(s, TextStep):
@@ -315,7 +282,7 @@ class AddEditDialog(QWidget):
             text = "".join(text_parts).strip()
 
             if not text and not any(isinstance(s, ActionStep) for s in steps):
-                return  # Nothing to save
+                return
 
             self.result_title = title
             self.result_text = text if text else f"[Macro: {title}]"
@@ -343,7 +310,6 @@ class AddEditDialog(QWidget):
     def keyPressEvent(self, event):
         """Close on Escape (unless macro builder is capturing)."""
         if event.key() == Qt.Key.Key_Escape:
-            # Don't close if macro builder is capturing a key
             if hasattr(self, 'macro_builder') and self.macro_builder.capture_widget.isVisible():
                 self.macro_builder.capture_widget.hide()
                 return

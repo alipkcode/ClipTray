@@ -1,8 +1,8 @@
 """
 ClipTray - Macro Builder Widget
-A visual builder for creating clip macros — sequences of text segments
-and keyboard actions. Users can add text blocks with "+" buttons between
-them to insert key actions (captured by listening for actual key presses).
+A visual builder for creating clip macros: sequences of text segments
+interleaved with keyboard actions. The UI uses a vertical timeline
+layout with step numbers, clean text editors, and inline action badges.
 """
 
 from PyQt6.QtWidgets import (
@@ -16,7 +16,7 @@ from PyQt6.QtGui import QColor, QCursor, QKeySequence
 from clip_manager import TextStep, ActionStep
 
 
-# ── Key name mapping (Qt key → pyautogui key name) ──
+# ---- Key name mapping (Qt key -> pyautogui key name) ----
 
 QT_KEY_TO_NAME = {
     Qt.Key.Key_Return: "enter",
@@ -43,21 +43,16 @@ QT_KEY_TO_NAME = {
     Qt.Key.Key_Print: "printscreen",
 }
 
-# Modifier-only keys (we track these but they aren't standalone actions)
 MODIFIER_KEYS = {
     Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta,
 }
 
 
 def key_event_to_action(event) -> tuple:
-    """
-    Convert a QKeyEvent to (keys_list, label_str) for an ActionStep.
-    Returns (None, None) if it's just a modifier press with no actual key.
-    """
+    """Convert a QKeyEvent to (keys_list, label_str) for an ActionStep."""
     modifiers = event.modifiers()
     key = event.key()
 
-    # Skip if it's only a modifier key
     if key in MODIFIER_KEYS:
         return None, None
 
@@ -77,12 +72,10 @@ def key_event_to_action(event) -> tuple:
         keys.append("win")
         label_parts.append("Win")
 
-    # Get the actual key name
     if key in QT_KEY_TO_NAME:
         key_name = QT_KEY_TO_NAME[key]
         label_parts.append(key_name.capitalize())
     else:
-        # Try to get the text representation
         text = event.text()
         if text and text.isprintable():
             key_name = text.lower()
@@ -95,33 +88,153 @@ def key_event_to_action(event) -> tuple:
     return keys, label
 
 
-class KeyCaptureButton(QPushButton):
+# ---- Individual step widgets ----
+
+
+class StepTextEditor(QWidget):
+    """A text editor row for a TextStep, with a step number indicator and delete button."""
+    text_changed = pyqtSignal(int, str)  # index, new_text
+    removed = pyqtSignal(int)
+
+    def __init__(self, step: TextStep, index: int, step_number: int,
+                 can_delete: bool = True, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.setObjectName("StepRow")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Step number pill
+        num_label = QLabel(str(step_number))
+        num_label.setObjectName("StepNumber")
+        num_label.setFixedSize(24, 24)
+        num_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(num_label, alignment=Qt.AlignmentFlag.AlignTop)
+
+        # Text editor
+        self.editor = QTextEdit()
+        self.editor.setObjectName("MacroTextEdit")
+        self.editor.setPlaceholderText("Type text here...")
+        self.editor.setPlainText(step.value)
+        self.editor.setMinimumHeight(48)
+        self.editor.setMaximumHeight(80)
+        self.editor.textChanged.connect(self._on_changed)
+        layout.addWidget(self.editor, 1)
+
+        # Delete button
+        if can_delete:
+            del_btn = QPushButton("\u2715")
+            del_btn.setObjectName("StepDeleteBtn")
+            del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            del_btn.setFixedSize(22, 22)
+            del_btn.setToolTip("Remove this step")
+            del_btn.clicked.connect(lambda: self.removed.emit(self.index))
+            layout.addWidget(del_btn, alignment=Qt.AlignmentFlag.AlignTop)
+
+    def _on_changed(self):
+        self.text_changed.emit(self.index, self.editor.toPlainText())
+
+
+class StepActionBadge(QWidget):
+    """An action badge row showing a captured key, with step number and delete."""
+    removed = pyqtSignal(int)
+
+    def __init__(self, action: ActionStep, index: int, step_number: int, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.setObjectName("StepRow")
+        self.setFixedHeight(36)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Step number pill
+        num_label = QLabel(str(step_number))
+        num_label.setObjectName("StepNumberAction")
+        num_label.setFixedSize(24, 24)
+        num_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(num_label)
+
+        # Badge container
+        badge = QWidget()
+        badge.setObjectName("ActionBadge")
+        badge_layout = QHBoxLayout(badge)
+        badge_layout.setContentsMargins(10, 4, 10, 4)
+        badge_layout.setSpacing(6)
+
+        icon = QLabel("\u2328")
+        icon.setObjectName("ActionBadgeIcon")
+        badge_layout.addWidget(icon)
+
+        lbl = QLabel(action.label)
+        lbl.setObjectName("ActionBadgeLabel")
+        badge_layout.addWidget(lbl)
+
+        badge_layout.addStretch()
+        layout.addWidget(badge, 1)
+
+        # Delete
+        del_btn = QPushButton("\u2715")
+        del_btn.setObjectName("StepDeleteBtn")
+        del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        del_btn.setFixedSize(22, 22)
+        del_btn.setToolTip("Remove this action")
+        del_btn.clicked.connect(lambda: self.removed.emit(self.index))
+        layout.addWidget(del_btn)
+
+
+class KeyCaptureOverlay(QWidget):
     """
-    A button that, when clicked, starts listening for a key press.
-    The captured key combination is emitted as an ActionStep.
+    An inline overlay that captures a single key press.
+    Shows a pulsing prompt, then returns the captured action.
     """
-    action_captured = pyqtSignal(object)  # emits ActionStep
+    action_captured = pyqtSignal(object)  # ActionStep
+    capture_cancelled = pyqtSignal()
 
     def __init__(self, parent=None):
-        super().__init__("Press any key...", parent)
-        self.setObjectName("KeyCaptureBtn")
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        super().__init__(parent)
+        self.setObjectName("KeyCaptureOverlay")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._listening = False
 
-    def start_listening(self):
-        """Start capturing the next key press."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon = QLabel("\u2328")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setObjectName("CaptureIcon")
+        layout.addWidget(icon)
+
+        prompt = QLabel("Press any key or combination...")
+        prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        prompt.setObjectName("CapturePrompt")
+        layout.addWidget(prompt)
+
+        hint = QLabel("e.g. Enter, Tab, Ctrl+A")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setObjectName("CaptureHint")
+        layout.addWidget(hint)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("CaptureCancelBtn")
+        cancel_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        cancel_btn.setFixedWidth(80)
+        cancel_btn.clicked.connect(self._cancel)
+        layout.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def start(self):
         self._listening = True
-        self.setText("⌨  Waiting for key press...")
-        self.setStyleSheet("""
-            background-color: rgba(108, 142, 255, 0.15);
-            border: 1px dashed rgba(108, 142, 255, 0.5);
-            border-radius: 8px;
-            color: #6C8EFF;
-            font-size: 13px;
-            padding: 8px 16px;
-        """)
+        self.show()
         self.setFocus()
+
+    def _cancel(self):
+        self._listening = False
+        self.capture_cancelled.emit()
 
     def keyPressEvent(self, event):
         if self._listening:
@@ -134,216 +247,133 @@ class KeyCaptureButton(QPushButton):
         super().keyPressEvent(event)
 
 
-class ActionBadge(QWidget):
-    """
-    A small badge showing a captured key action, e.g. [Enter] or [Ctrl + A].
-    Has a delete button to remove it.
-    """
-    removed = pyqtSignal(int)  # index of this badge
-
-    def __init__(self, action: ActionStep, index: int, parent=None):
-        super().__init__(parent)
-        self.action = action
-        self.index = index
-        self.setFixedHeight(34)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 4, 6, 4)
-        layout.setSpacing(6)
-
-        # Key icon
-        icon = QLabel("⌨")
-        icon.setStyleSheet("color: #6C8EFF; font-size: 13px; background: transparent; border: none;")
-        layout.addWidget(icon)
-
-        # Label
-        lbl = QLabel(action.label)
-        lbl.setObjectName("ActionBadgeLabel")
-        layout.addWidget(lbl)
-
-        # Delete button
-        del_btn = QPushButton("✕")
-        del_btn.setObjectName("ActionBadgeDelete")
-        del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        del_btn.setFixedSize(20, 20)
-        del_btn.clicked.connect(lambda: self.removed.emit(self.index))
-        layout.addWidget(del_btn)
-
-        self.setObjectName("ActionBadge")
-
-
-class AddActionButton(QPushButton):
-    """A styled '+ Add Action' button placed between text segments."""
-
-    def __init__(self, index: int, parent=None):
-        super().__init__("＋ Action", parent)
-        self.index = index
-        self.setObjectName("AddActionBtn")
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setFixedHeight(28)
+# ---- Main MacroBuilder ----
 
 
 class MacroBuilder(QWidget):
     """
-    The full macro builder UI.
-    Shows a sequence of:  [+ action]  [text area]  [+ action]  [text area]  ...
-    Users build a sequence by adding text and key actions between them.
-    
-    The data structure is a list of steps: TextStep and ActionStep interleaved.
+    The full macro builder UI with a clean vertical timeline layout.
+    Each step has a number indicator. An '+ Add Action' button sits
+    at the bottom. Pressing it reveals a key capture overlay.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.steps = []  # List of TextStep / ActionStep
-        self._capture_insert_index = -1  # Where to insert the next captured action
+        self.steps = []
+        self._capture_insert_index = -1
 
         self._build_ui()
-        # Start with one empty text step
         self.steps.append(TextStep(value=""))
         self._refresh_ui()
 
     def _build_ui(self):
-        """Build the scrollable builder area."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Scroll area for the steps
+        # Scroll area for steps
         self.scroll = QScrollArea()
+        self.scroll.setObjectName("MacroScroll")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setMaximumHeight(260)
-        self.scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical {
-                background: transparent; width: 5px; margin: 2px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255,255,255,0.12); border-radius: 2px; min-height: 20px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none; border: none; height: 0px;
-            }
-        """)
+        self.scroll.setMinimumHeight(100)
+        self.scroll.setMaximumHeight(280)
 
         self.steps_container = QWidget()
+        self.steps_container.setObjectName("MacroStepsContainer")
         self.steps_layout = QVBoxLayout(self.steps_container)
-        self.steps_layout.setContentsMargins(0, 0, 0, 0)
-        self.steps_layout.setSpacing(4)
+        self.steps_layout.setContentsMargins(4, 4, 4, 4)
+        self.steps_layout.setSpacing(6)
         self.steps_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.scroll.setWidget(self.steps_container)
         main_layout.addWidget(self.scroll)
 
-        # Key capture overlay (hidden by default)
-        self.capture_widget = KeyCaptureButton(self)
+        # Bottom toolbar: + Add Action
+        toolbar = QWidget()
+        toolbar.setObjectName("MacroToolbar")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(0, 8, 0, 0)
+        toolbar_layout.setSpacing(8)
+
+        add_action_btn = QPushButton("\u2795  Add Action")
+        add_action_btn.setObjectName("AddActionBtn")
+        add_action_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        add_action_btn.clicked.connect(self._on_add_action_clicked)
+        toolbar_layout.addWidget(add_action_btn)
+
+        add_text_btn = QPushButton("\u2795  Add Text Block")
+        add_text_btn.setObjectName("AddTextBtn")
+        add_text_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        add_text_btn.clicked.connect(self._on_add_text_clicked)
+        toolbar_layout.addWidget(add_text_btn)
+
+        toolbar_layout.addStretch()
+
+        main_layout.addWidget(toolbar)
+
+        # Key capture overlay (hidden, shown inline when capturing)
+        self.capture_widget = KeyCaptureOverlay(self)
         self.capture_widget.action_captured.connect(self._on_action_captured)
+        self.capture_widget.capture_cancelled.connect(self._on_capture_cancelled)
         self.capture_widget.hide()
 
     def _refresh_ui(self):
         """Rebuild the visual step list from self.steps."""
-        # Clear existing widgets
         while self.steps_layout.count():
             item = self.steps_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
+        can_delete = len(self.steps) > 1
+        step_num = 1
+
         for i, step in enumerate(self.steps):
-            # Add "+" action button ABOVE each step
-            add_btn_top = AddActionButton(index=i)
-            add_btn_top.clicked.connect(lambda checked, idx=i: self._on_add_action(idx))
-            self.steps_layout.addWidget(add_btn_top)
-
             if isinstance(step, TextStep):
-                # Text editor
-                text_widget = self._create_text_widget(step, i)
-                self.steps_layout.addWidget(text_widget)
+                widget = StepTextEditor(
+                    step, i, step_num, can_delete=can_delete
+                )
+                widget.text_changed.connect(self._on_text_changed)
+                widget.removed.connect(self._on_remove_step)
+                self.steps_layout.addWidget(widget)
             elif isinstance(step, ActionStep):
-                # Action badge
-                badge = ActionBadge(step, i)
-                badge.removed.connect(self._on_remove_step)
-                self.steps_layout.addWidget(badge)
+                widget = StepActionBadge(step, i, step_num)
+                widget.removed.connect(self._on_remove_step)
+                self.steps_layout.addWidget(widget)
+            step_num += 1
 
-        # Final "+" button at the bottom
-        add_btn_bottom = AddActionButton(index=len(self.steps))
-        add_btn_bottom.clicked.connect(lambda checked, idx=len(self.steps): self._on_add_action(idx))
-        self.steps_layout.addWidget(add_btn_bottom)
-
-    def _create_text_widget(self, step: TextStep, index: int) -> QWidget:
-        """Create a text editor widget for a TextStep."""
-        container = QWidget()
-        container.setObjectName("MacroTextContainer")
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        editor = QTextEdit()
-        editor.setObjectName("MacroTextEdit")
-        editor.setPlaceholderText("Type text here...")
-        editor.setPlainText(step.value)
-        editor.setMinimumHeight(50)
-        editor.setMaximumHeight(80)
-        editor.setStyleSheet("""
-            QTextEdit {
-                background-color: #181825;
-                border: 1px solid rgba(255, 255, 255, 0.06);
-                border-radius: 8px;
-                color: #CDD6F4;
-                font-size: 13px;
-                padding: 8px 10px;
-            }
-            QTextEdit:focus {
-                border: 1px solid rgba(108, 142, 255, 0.4);
-            }
-        """)
-        # Auto-save text as user types
-        editor.textChanged.connect(lambda idx=index, e=editor: self._on_text_changed(idx, e))
-        layout.addWidget(editor, 1)
-
-        # Delete button (only if there are multiple steps)
-        if len(self.steps) > 1:
-            del_btn = QPushButton("✕")
-            del_btn.setObjectName("ActionBadgeDelete")
-            del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            del_btn.setFixedSize(22, 22)
-            del_btn.clicked.connect(lambda checked, idx=index: self._on_remove_step(idx))
-            layout.addWidget(del_btn, alignment=Qt.AlignmentFlag.AlignTop)
-
-        return container
-
-    def _on_text_changed(self, index: int, editor: QTextEdit):
-        """Update the step text when user types."""
+    def _on_text_changed(self, index: int, text: str):
         if 0 <= index < len(self.steps) and isinstance(self.steps[index], TextStep):
-            self.steps[index].value = editor.toPlainText()
+            self.steps[index].value = text
 
-    def _on_add_action(self, insert_index: int):
-        """User clicked '+ Action' — start key capture."""
-        self._capture_insert_index = insert_index
-        self.capture_widget.show()
-        self.capture_widget.start_listening()
+    def _on_add_action_clicked(self):
+        """User wants to add a keyboard action at the end."""
+        self._capture_insert_index = len(self.steps)
+        self.capture_widget.start()
+
+    def _on_add_text_clicked(self):
+        """Add a new empty text block at the end."""
+        self.steps.append(TextStep(value=""))
+        self._refresh_ui()
+        # Scroll to bottom
+        QTimer.singleShot(50, lambda: self.scroll.verticalScrollBar().setValue(
+            self.scroll.verticalScrollBar().maximum()
+        ))
 
     def _on_action_captured(self, action: ActionStep):
-        """A key was captured — insert it and add a text step after if needed."""
+        """A key was captured. Insert the action step."""
         self.capture_widget.hide()
         idx = self._capture_insert_index
-
-        # Insert the action step
         self.steps.insert(idx, action)
-
-        # If the action is between two non-text steps or at a boundary,
-        # ensure there's a text step after it for the user to type in
-        next_idx = idx + 1
-        if next_idx >= len(self.steps) or isinstance(self.steps[next_idx], ActionStep):
-            self.steps.insert(next_idx, TextStep(value=""))
-
-        # Also ensure there's a text step before if needed
-        if idx == 0 or isinstance(self.steps[idx - 1], ActionStep):
-            self.steps.insert(idx, TextStep(value=""))
-
         self._refresh_ui()
+        QTimer.singleShot(50, lambda: self.scroll.verticalScrollBar().setValue(
+            self.scroll.verticalScrollBar().maximum()
+        ))
+
+    def _on_capture_cancelled(self):
+        self.capture_widget.hide()
 
     def _on_remove_step(self, index: int):
         """Remove a step and merge adjacent text steps if needed."""
@@ -359,26 +389,18 @@ class MacroBuilder(QWidget):
                     merged.append(step)
             self.steps = merged
 
-            # Ensure at least one text step
             if not self.steps:
                 self.steps = [TextStep(value="")]
 
             self._refresh_ui()
 
     def get_steps(self) -> list:
-        """Return the current steps, filtering out empty text steps between actions."""
-        result = []
-        for step in self.steps:
-            if isinstance(step, TextStep):
-                # Keep all text steps (even empty ones between actions, user may want those)
-                result.append(step)
-            elif isinstance(step, ActionStep):
-                result.append(step)
-        return result
+        """Return the current steps."""
+        return list(self.steps)
 
     def set_steps(self, steps: list):
         """Load steps into the builder (for editing existing macros)."""
-        self.steps = steps if steps else [TextStep(value="")]
+        self.steps = list(steps) if steps else [TextStep(value="")]
         self._refresh_ui()
 
     def get_plain_text(self) -> str:

@@ -363,91 +363,201 @@ def get_stylesheet() -> str:
         color: #FF6C6C;
     }
 
-    /* ── Macro Builder ── */
+    /* ── Macro Toggle (segmented) ── */
+    #MacroToggleOuter {
+        background-color: #181825;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+    }
+    #MacroSegBtn {
+        background-color: transparent;
+        border: none;
+        border-radius: 10px;
+        color: #585B70;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 7px 0px;
+    }
+    #MacroSegBtn:hover {
+        color: #A6ADC8;
+    }
+    #MacroSegBtn:checked {
+        background-color: rgba(108, 142, 255, 0.14);
+        color: #89B4FA;
+        font-weight: 600;
+    }
+
+    /* ── Macro Builder Area ── */
+    #MacroHint {
+        color: #585B70;
+        font-size: 11px;
+        font-style: italic;
+        padding: 0px;
+        background: transparent;
+        border: none;
+    }
+    #MacroScroll {
+        background: transparent;
+        border: none;
+    }
+    #MacroScroll QScrollBar:vertical {
+        background: transparent;
+        width: 5px;
+        margin: 2px;
+    }
+    #MacroScroll QScrollBar::handle:vertical {
+        background: rgba(255, 255, 255, 0.10);
+        border-radius: 2px;
+        min-height: 20px;
+    }
+    #MacroScroll QScrollBar::add-line:vertical,
+    #MacroScroll QScrollBar::sub-line:vertical,
+    #MacroScroll QScrollBar::add-page:vertical,
+    #MacroScroll QScrollBar::sub-page:vertical {
+        background: none;
+        border: none;
+        height: 0px;
+    }
+    #MacroStepsContainer {
+        background: transparent;
+    }
+
+    /* Step number pills */
+    #StepNumber {
+        background-color: rgba(108, 142, 255, 0.12);
+        border: 1px solid rgba(108, 142, 255, 0.2);
+        border-radius: 12px;
+        color: #89B4FA;
+        font-size: 11px;
+        font-weight: 700;
+    }
+    #StepNumberAction {
+        background-color: rgba(249, 226, 175, 0.12);
+        border: 1px solid rgba(249, 226, 175, 0.2);
+        border-radius: 12px;
+        color: #F9E2AF;
+        font-size: 11px;
+        font-weight: 700;
+    }
+    #StepDeleteBtn {
+        background-color: transparent;
+        border: none;
+        border-radius: 4px;
+        color: #45475A;
+        font-size: 13px;
+        padding: 2px;
+    }
+    #StepDeleteBtn:hover {
+        background-color: rgba(255, 80, 80, 0.1);
+        color: #F38BA8;
+    }
+
+    /* Text editor in macro */
+    #MacroTextEdit {
+        background-color: #181825;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+        color: #CDD6F4;
+        font-size: 13px;
+        padding: 8px 10px;
+        selection-background-color: rgba(108, 142, 255, 0.25);
+    }
+    #MacroTextEdit:focus {
+        border: 1px solid rgba(108, 142, 255, 0.35);
+    }
+
+    /* Action badge */
+    #ActionBadge {
+        background-color: rgba(249, 226, 175, 0.08);
+        border: 1px solid rgba(249, 226, 175, 0.18);
+        border-radius: 10px;
+    }
+    #ActionBadgeIcon {
+        color: #F9E2AF;
+        font-size: 14px;
+        background: transparent;
+        border: none;
+    }
+    #ActionBadgeLabel {
+        color: #F9E2AF;
+        font-size: 12px;
+        font-weight: 600;
+        background: transparent;
+        border: none;
+    }
+
+    /* Toolbar buttons */
+    #AddActionBtn {
+        background-color: rgba(249, 226, 175, 0.08);
+        border: 1px solid rgba(249, 226, 175, 0.15);
+        border-radius: 8px;
+        color: #F9E2AF;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 6px 14px;
+    }
+    #AddActionBtn:hover {
+        background-color: rgba(249, 226, 175, 0.16);
+        border-color: rgba(249, 226, 175, 0.3);
+    }
+    #AddTextBtn {
+        background-color: rgba(108, 142, 255, 0.08);
+        border: 1px solid rgba(108, 142, 255, 0.15);
+        border-radius: 8px;
+        color: #89B4FA;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 6px 14px;
+    }
+    #AddTextBtn:hover {
+        background-color: rgba(108, 142, 255, 0.16);
+        border-color: rgba(108, 142, 255, 0.3);
+    }
+
+    /* Key capture overlay */
+    #KeyCaptureOverlay {
+        background-color: #181825;
+        border: 1px solid rgba(166, 227, 161, 0.25);
+        border-radius: 14px;
+    }
+    #CaptureIcon {
+        color: #A6E3A1;
+        font-size: 28px;
+        background: transparent;
+        border: none;
+    }
+    #CapturePrompt {
+        color: #CDD6F4;
+        font-size: 14px;
+        font-weight: 600;
+        background: transparent;
+        border: none;
+    }
+    #CaptureHint {
+        color: #585B70;
+        font-size: 11px;
+        background: transparent;
+        border: none;
+    }
+    #CaptureCancelBtn {
+        background-color: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 6px;
+        color: #6C7086;
+        font-size: 11px;
+        padding: 4px 12px;
+        margin-top: 4px;
+    }
+    #CaptureCancelBtn:hover {
+        background-color: rgba(255, 80, 80, 0.12);
+        color: #F38BA8;
+    }
+
+    /* Macro indicator on clip cards */
     #MacroIndicator {
         background-color: rgba(108, 142, 255, 0.15);
         border-radius: 10px;
         color: #6C8EFF;
         font-size: 12px;
-    }
-    #MacroTextContainer {
-        background-color: #1E1E2E;
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 10px;
-    }
-    #MacroTextEdit {
-        background-color: transparent;
-        color: #CDD6F4;
-        font-size: 13px;
-        border: none;
-        padding: 8px;
-        selection-background-color: rgba(108, 142, 255, 0.25);
-    }
-    #ActionBadge {
-        background-color: rgba(108, 142, 255, 0.12);
-        border: 1px solid rgba(108, 142, 255, 0.25);
-        border-radius: 8px;
-    }
-    #ActionBadgeLabel {
-        color: #6C8EFF;
-        font-size: 12px;
-        font-weight: 600;
-    }
-    #ActionBadgeDelete {
-        background-color: transparent;
-        border: none;
-        color: #6C7086;
-        font-size: 12px;
-        padding: 0px;
-    }
-    #ActionBadgeDelete:hover {
-        color: #FF6C6C;
-    }
-    #AddActionBtn {
-        background-color: rgba(108, 142, 255, 0.08);
-        border: 1px dashed rgba(108, 142, 255, 0.3);
-        border-radius: 8px;
-        color: #6C8EFF;
-        font-size: 12px;
-        font-weight: 500;
-        padding: 6px 16px;
-    }
-    #AddActionBtn:hover {
-        background-color: rgba(108, 142, 255, 0.18);
-        border-color: rgba(108, 142, 255, 0.5);
-    }
-    #KeyCaptureBtn {
-        background-color: rgba(166, 227, 161, 0.1);
-        border: 1px solid rgba(166, 227, 161, 0.3);
-        border-radius: 8px;
-        color: #A6E3A1;
-        font-size: 12px;
-        font-weight: 500;
-        padding: 8px 20px;
-    }
-    #KeyCaptureBtn:hover {
-        background-color: rgba(166, 227, 161, 0.2);
-    }
-    #KeyCaptureBtn:focus {
-        border-color: #A6E3A1;
-        background-color: rgba(166, 227, 161, 0.25);
-    }
-    #MacroToggle {
-        background-color: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 10px;
-    }
-    #MacroToggleBtn {
-        background-color: transparent;
-        border: none;
-        border-radius: 8px;
-        color: #6C7086;
-        font-size: 12px;
-        font-weight: 500;
-        padding: 6px 14px;
-    }
-    #MacroToggleBtn:checked {
-        background-color: rgba(108, 142, 255, 0.15);
-        color: #6C8EFF;
     }
     """
