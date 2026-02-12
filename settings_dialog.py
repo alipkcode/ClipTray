@@ -6,10 +6,11 @@ for user preferences like Click-to-Paste mode.
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QGraphicsDropShadowEffect, QSizePolicy, QGridLayout
+    QPushButton, QGraphicsDropShadowEffect, QSizePolicy, QGridLayout,
+    QScrollArea
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen, QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPropertyAnimation, QEasingCurve, QTimer, QUrl
+from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen, QFont, QDesktopServices
 
 from settings_manager import SettingsManager
 
@@ -250,6 +251,211 @@ class CaretPositionPicker(QWidget):
         painter.end()
 
 
+class CreditsDialog(QWidget):
+    """
+    Credits / About page for ClipTray.
+    Shows developer credit, company, version, license, and GitHub link.
+    """
+
+    closed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DialogOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._build_ui()
+
+    def _build_ui(self):
+        overlay_layout = QVBoxLayout(self)
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.panel = QWidget()
+        self.panel.setObjectName("DialogPanel")
+        self.panel.setFixedWidth(460)
+        self.panel.setMaximumHeight(560)
+
+        shadow = QGraphicsDropShadowEffect(self.panel)
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 100))
+        self.panel.setGraphicsEffect(shadow)
+
+        panel_layout = QVBoxLayout(self.panel)
+        panel_layout.setContentsMargins(28, 24, 28, 24)
+        panel_layout.setSpacing(0)
+
+        # ── Header ──
+        header_layout = QHBoxLayout()
+        title = QLabel("About ClipTray")
+        title.setObjectName("DialogTitle")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("CloseButton")
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.clicked.connect(self._on_close)
+        header_layout.addWidget(close_btn)
+        panel_layout.addLayout(header_layout)
+
+        # ── Divider ──
+        divider = QWidget()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.06);")
+        panel_layout.addWidget(divider)
+
+        # ── Scrollable content ──
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; }"
+            "QScrollBar:vertical { width: 6px; background: transparent; }"
+            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.10); border-radius: 3px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(0, 16, 0, 12)
+        cl.setSpacing(16)
+
+        # ── App name & version ──
+        app_name = QLabel("ClipTray")
+        app_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        app_name.setStyleSheet(
+            "font-size: 26px; font-weight: bold; color: #CDD6F4;"
+            "letter-spacing: 1px;"
+        )
+        cl.addWidget(app_name)
+
+        version_label = QLabel("Version 1.4")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        version_label.setStyleSheet(
+            "font-size: 13px; color: #6C8EFF; font-weight: 600;"
+            "background: rgba(108, 142, 255, 0.10); border-radius: 10px;"
+            "padding: 4px 14px;"
+        )
+        cl.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        cl.addSpacing(4)
+
+        # ── Developer ──
+        dev_title = QLabel("Developer")
+        dev_title.setStyleSheet("font-size: 10px; color: #6C7086; text-transform: uppercase; letter-spacing: 1.5px;")
+        cl.addWidget(dev_title)
+
+        dev_name = QLabel("Ali Paknahal")
+        dev_name.setStyleSheet("font-size: 15px; color: #CDD6F4; font-weight: 600;")
+        cl.addWidget(dev_name)
+
+        # ── Company ──
+        company_title = QLabel("Company")
+        company_title.setStyleSheet("font-size: 10px; color: #6C7086; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px;")
+        cl.addWidget(company_title)
+
+        company_name = QLabel("Certainty")
+        company_name.setStyleSheet("font-size: 15px; color: #CDD6F4; font-weight: 600;")
+        cl.addWidget(company_name)
+
+        # ── Date ──
+        date_title = QLabel("First Released")
+        date_title.setStyleSheet("font-size: 10px; color: #6C7086; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px;")
+        cl.addWidget(date_title)
+
+        date_val = QLabel("February 2026")
+        date_val.setStyleSheet("font-size: 14px; color: #BAC2DE;")
+        cl.addWidget(date_val)
+
+        # ── Divider ──
+        sep1 = QWidget()
+        sep1.setFixedHeight(1)
+        sep1.setStyleSheet("background: rgba(255,255,255,0.06);")
+        cl.addWidget(sep1)
+
+        # ── GitHub ──
+        gh_title = QLabel("Source Code")
+        gh_title.setStyleSheet("font-size: 10px; color: #6C7086; text-transform: uppercase; letter-spacing: 1.5px;")
+        cl.addWidget(gh_title)
+
+        gh_link = QPushButton("\U0001F517  github.com/alipkcode/ClipTray")
+        gh_link.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        gh_link.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 13px; color: #6C8EFF; background: rgba(108,142,255,0.08);"
+            "  border: 1px solid rgba(108,142,255,0.20); border-radius: 8px;"
+            "  padding: 8px 14px; text-align: left;"
+            "}"
+            "QPushButton:hover {"
+            "  background: rgba(108,142,255,0.18); border-color: rgba(108,142,255,0.40);"
+            "}"
+        )
+        gh_link.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://github.com/alipkcode/ClipTray"))
+        )
+        cl.addWidget(gh_link)
+
+        # ── Divider ──
+        sep2 = QWidget()
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet("background: rgba(255,255,255,0.06);")
+        cl.addWidget(sep2)
+
+        # ── License / Open Source notice ──
+        license_title = QLabel("License")
+        license_title.setStyleSheet("font-size: 10px; color: #6C7086; text-transform: uppercase; letter-spacing: 1.5px;")
+        cl.addWidget(license_title)
+
+        license_text = QLabel(
+            "ClipTray is free and open-source software.\n\n"
+            "You are free to use, modify, and distribute this software "
+            "in any way you like. Developers and users alike are welcome "
+            "to fork, adapt, and build upon it without restriction."
+        )
+        license_text.setWordWrap(True)
+        license_text.setStyleSheet(
+            "font-size: 12px; color: #A6ADC8; line-height: 1.5;"
+            "background: rgba(255,255,255,0.03); border-radius: 8px;"
+            "padding: 12px 14px;"
+        )
+        cl.addWidget(license_text)
+
+        # ── Enjoy ──
+        enjoy = QLabel("Enjoy! \U0001F389")
+        enjoy.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        enjoy.setStyleSheet(
+            "font-size: 18px; color: #CDD6F4; font-weight: bold;"
+            "padding: 12px 0 4px 0;"
+        )
+        cl.addWidget(enjoy)
+
+        cl.addStretch()
+        scroll.setWidget(content)
+        panel_layout.addWidget(scroll)
+
+        # ── Back button ──
+        panel_layout.addSpacing(12)
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        back_btn = QPushButton("Back")
+        back_btn.setObjectName("SaveButton")
+        back_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        back_btn.clicked.connect(self._on_close)
+        btn_layout.addWidget(back_btn)
+        panel_layout.addLayout(btn_layout)
+
+        overlay_layout.addWidget(self.panel)
+
+    def _on_close(self):
+        self.closed.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self._on_close()
+        super().keyPressEvent(event)
+
+
 class SettingsDialog(QWidget):
     """
     Settings panel displayed over the overlay.
@@ -420,6 +626,23 @@ class SettingsDialog(QWidget):
         divider2.setStyleSheet("background-color: rgba(255, 255, 255, 0.06);")
         panel_layout.addWidget(divider2)
 
+        # ── Credits button ──
+        credits_btn = QPushButton("ℹ️  Credits & About")
+        credits_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        credits_btn.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 12px; color: #A6ADC8; background: rgba(255,255,255,0.04);"
+            "  border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;"
+            "  padding: 8px 16px;"
+            "}"
+            "QPushButton:hover {"
+            "  background: rgba(108,142,255,0.10); color: #CDD6F4;"
+            "  border-color: rgba(108,142,255,0.30);"
+            "}"
+        )
+        credits_btn.clicked.connect(self._open_credits)
+        panel_layout.addWidget(credits_btn)
+
         # ── Close button ──
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -470,11 +693,33 @@ class SettingsDialog(QWidget):
                 "background: rgba(255, 255, 255, 0.03); border-radius: 8px;"
             )
 
+    def _open_credits(self):
+        """Show the credits / about page over the settings dialog."""
+        self.panel.hide()
+        self._credits = CreditsDialog(parent=self)
+        self._credits.closed.connect(self._close_credits)
+        self._credits.setGeometry(self.rect())
+        self._credits.show()
+
+    def _close_credits(self):
+        """Return from credits page back to settings."""
+        self._credits.hide()
+        self._credits.deleteLater()
+        self.panel.show()
+
     def _on_close(self):
         """Close the settings dialog."""
         self.closed.emit()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_credits') and self._credits.isVisible():
+            self._credits.setGeometry(self.rect())
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            self._on_close()
+            if hasattr(self, '_credits') and self._credits.isVisible():
+                self._close_credits()
+            else:
+                self._on_close()
         super().keyPressEvent(event)
