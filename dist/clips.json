@@ -1,0 +1,19 @@
+{
+    "clips": [
+        {
+            "id": "1",
+            "title": "Email Signature",
+            "text": "Best regards,\nYour Name\nyour.email@example.com"
+        },
+        {
+            "id": "2",
+            "title": "Phone Number",
+            "text": "+1 (555) 123-4567"
+        },
+        {
+            "id": "3",
+            "title": "Address",
+            "text": "123 Main Street, City, State 12345"
+        }
+    ]
+}
