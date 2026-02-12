@@ -15,6 +15,7 @@ class SettingsManager:
     DEFAULTS = {
         "click_to_paste": False,  # When True, wait for user click before pasting
         "caret_companion": False,  # When True, show a small icon near the text cursor
+        "caret_companion_position": "top-right",  # Position of the icon relative to the caret
     }
 
     def __init__(self, filepath: str = None):
@@ -75,3 +76,12 @@ class SettingsManager:
     @caret_companion.setter
     def caret_companion(self, value: bool):
         self.set("caret_companion", value)
+
+    @property
+    def caret_companion_position(self) -> str:
+        """Position of the caret companion icon relative to the text cursor."""
+        return str(self.get("caret_companion_position", "top-right"))
+
+    @caret_companion_position.setter
+    def caret_companion_position(self, value: str):
+        self.set("caret_companion_position", value)

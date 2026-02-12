@@ -300,6 +300,7 @@ class ClipTrayApp:
         # ── Caret Companion ──
         self.caret_companion = CaretCompanion()
         self.caret_companion.open_requested.connect(self._on_companion_open)
+        self.caret_companion.set_position(self.settings.caret_companion_position)
         self.caret_companion.set_enabled(self.settings.caret_companion)
 
         # Watch for settings changes (re-check after overlay closes)
@@ -341,6 +342,7 @@ class ClipTrayApp:
 
     def _on_settings_changed(self):
         """Called when settings dialog closes — re-sync caret companion."""
+        self.caret_companion.set_position(self.settings.caret_companion_position)
         self.caret_companion.set_enabled(self.settings.caret_companion)
 
     def _on_type_clip(self, text: str):

@@ -59,8 +59,8 @@ _user32 = ctypes.windll.user32
 _kernel32 = ctypes.windll.kernel32
 
 
-def _get_caret_win32() -> Optional[Tuple[int, int]]:
-    """Return (x, y) screen coords of the caret bottom-left, or None."""
+def _get_caret_win32() -> Optional[Tuple[int, int, int]]:
+    """Return (x, y_top, caret_height) screen coords, or None."""
     gti = GUITHREADINFO()
     gti.cbSize = ctypes.sizeof(GUITHREADINFO)
     if not _user32.GetGUIThreadInfo(0, ctypes.byref(gti)):
@@ -75,7 +75,9 @@ def _get_caret_win32() -> Optional[Tuple[int, int]]:
     pt = POINT(gti.rcCaret.left, gti.rcCaret.top)
     _user32.ClientToScreen(gti.hwndCaret, ctypes.byref(pt))
     caret_h = gti.rcCaret.bottom - gti.rcCaret.top
-    return (pt.x, pt.y + caret_h)
+    if caret_h < 4:
+        caret_h = 18  # reasonable default for tiny/zero-height carets
+    return (pt.x, pt.y, caret_h)
 
 
 # ─────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ def _ensure_uia():
 #  Method 2 – UIA TextPattern2.GetCaretRange
 #  Works for WPF, UWP, some Win32 rich-edit controls.
 # ─────────────────────────────────────────────────────────
-def _get_caret_uia_tp2() -> Optional[Tuple[int, int]]:
+def _get_caret_uia_tp2() -> Optional[Tuple[int, int, int]]:
     """Use IUIAutomationTextPattern2.GetCaretRange for caret pos."""
     if not _ensure_uia():
         return None
@@ -129,7 +131,8 @@ def _get_caret_uia_tp2() -> Optional[Tuple[int, int]]:
             rects = caret_range.GetBoundingRectangles()
             if rects and len(rects) >= 4:
                 x, y, w, h = rects[0], rects[1], rects[2], rects[3]
-                return (int(x), int(y + h))
+                caret_h = int(h) if int(h) >= 4 else 18
+                return (int(x), int(y), caret_h)
     except Exception:
         pass
     return None
@@ -140,7 +143,7 @@ def _get_caret_uia_tp2() -> Optional[Tuple[int, int]]:
 #  Works for Chromium / Electron (VS Code editor, chat,
 #  browser address bars, etc.)
 # ─────────────────────────────────────────────────────────
-def _get_caret_uia_selection() -> Optional[Tuple[int, int]]:
+def _get_caret_uia_selection() -> Optional[Tuple[int, int, int]]:
     """Use TextPattern.GetSelection bounding rects as caret proxy."""
     if not _ensure_uia():
         return None
@@ -159,11 +162,15 @@ def _get_caret_uia_selection() -> Optional[Tuple[int, int]]:
                     # rects is a Rect or list — first rect is x,y,w,h
                     if hasattr(rects, 'left'):
                         # It's a single Rect object
-                        return (int(rects.left), int(rects.bottom))
+                        caret_h = int(rects.bottom - rects.top)
+                        if caret_h < 4:
+                            caret_h = 18
+                        return (int(rects.left), int(rects.top), caret_h)
                     elif hasattr(rects, '__getitem__'):
                         # Tuple/list  (x, y, w, h)
                         x, y, w, h = rects[0], rects[1], rects[2], rects[3]
-                        return (int(x + w), int(y + h))
+                        caret_h = int(h) if int(h) >= 4 else 18
+                        return (int(x + w), int(y), caret_h)
     except Exception:
         pass
     return None
@@ -186,8 +193,8 @@ _EDITABLE_PATTERNS = {
 }
 
 
-def _get_caret_fallback() -> Optional[Tuple[int, int]]:
-    """Return bottom-right of the focused control if it looks editable."""
+def _get_caret_fallback() -> Optional[Tuple[int, int, int]]:
+    """Return right edge of the focused control if it looks editable."""
     if not _ensure_uia():
         return None
     try:
@@ -199,7 +206,8 @@ def _get_caret_fallback() -> Optional[Tuple[int, int]]:
             return None
         r = ctrl.BoundingRectangle
         if r.width() > 0 and r.height() > 0:
-            return (int(r.right), int(r.bottom))
+            caret_h = min(int(r.height()), 24)  # cap for large controls
+            return (int(r.right), int(r.top), caret_h)
     except Exception:
         pass
     return None
@@ -208,11 +216,11 @@ def _get_caret_fallback() -> Optional[Tuple[int, int]]:
 # ─────────────────────────────────────────────────────────
 #  Combined caret detection – tries all methods in order
 # ─────────────────────────────────────────────────────────
-def get_caret_screen_pos() -> Optional[Tuple[int, int]]:
+def get_caret_screen_pos() -> Optional[Tuple[int, int, int]]:
     """
-    Return (x, y) screen coordinates near the text caret,
-    trying every detection method.  Returns None when no
-    editable control appears to be focused.
+    Return (x, y_top, caret_height) screen coordinates near the
+    text caret, trying every detection method.  Returns None when
+    no editable control appears to be focused.
     """
     # 1. Win32 – cheapest, most accurate for legacy apps
     pos = _get_caret_win32()
@@ -286,6 +294,30 @@ def create_mini_icon(size: int = 22) -> QPixmap:
 # ─────────────────────────────────────────────────────────
 #  CaretCompanionIcon – the tiny floating widget
 # ─────────────────────────────────────────────────────────
+    # All supported position labels
+POSITION_LABELS = {
+    "top-right":    "Top Right",
+    "top-left":     "Top Left",
+    "bottom-right": "Bottom Right",
+    "bottom-left":  "Bottom Left",
+    "top":          "Top",
+    "bottom":       "Bottom",
+    "right":        "Right",
+    "left":         "Left",
+}
+
+# When the preferred position goes off-screen, try these in order
+_FALLBACK_ORDER = {
+    "top-right":    ["bottom-right", "top-left", "bottom-left"],
+    "top-left":     ["bottom-left", "top-right", "bottom-right"],
+    "bottom-right": ["top-right", "bottom-left", "top-left"],
+    "bottom-left":  ["top-left", "bottom-right", "top-right"],
+    "top":          ["bottom", "top-right", "bottom-right"],
+    "bottom":       ["top", "bottom-right", "top-right"],
+    "right":        ["left", "top-right", "bottom-right"],
+    "left":         ["right", "top-left", "bottom-left"],
+}
+
 class CaretCompanionIcon(QWidget):
     """
     A small always-on-top frameless widget that follows the caret.
@@ -294,8 +326,7 @@ class CaretCompanionIcon(QWidget):
     clicked = pyqtSignal()
 
     ICON_SIZE = 22
-    OFFSET_X  = 6     # px to the right of the caret
-    OFFSET_Y  = 4     # px below the caret
+    GAP       = 2     # px gap between icon and caret line
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -309,6 +340,8 @@ class CaretCompanionIcon(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._preferred_position = "top-right"  # default
 
         # Icon label
         self._icon_label = QLabel(self)
@@ -325,10 +358,71 @@ class CaretCompanionIcon(QWidget):
         self._fade_anim.setDuration(600)
         self._fade_anim.setEasingCurve(QEasingCurve.Type.InQuad)
 
+    def set_preferred_position(self, pos: str):
+        """Set which side of the caret to attach the icon."""
+        if pos in POSITION_LABELS:
+            self._preferred_position = pos
+
+    # ── position calculations ──
+    def _calc_icon_pos(self, position: str,
+                       caret_x: int, caret_y: int, caret_h: int) -> Tuple[int, int]:
+        """Return (icon_x, icon_y) for a given position relative to the caret."""
+        sz = self.ICON_SIZE
+        g  = self.GAP
+        if position == "top-right":
+            return (caret_x + g, caret_y - sz)
+        elif position == "top-left":
+            return (caret_x - sz - g, caret_y - sz)
+        elif position == "bottom-right":
+            return (caret_x + g, caret_y + caret_h)
+        elif position == "bottom-left":
+            return (caret_x - sz - g, caret_y + caret_h)
+        elif position == "top":
+            return (caret_x - sz // 2, caret_y - sz - g)
+        elif position == "bottom":
+            return (caret_x - sz // 2, caret_y + caret_h + g)
+        elif position == "right":
+            return (caret_x + g, caret_y + (caret_h - sz) // 2)
+        elif position == "left":
+            return (caret_x - sz - g, caret_y + (caret_h - sz) // 2)
+        # fallback
+        return (caret_x + g, caret_y - sz)
+
+    def _is_on_screen(self, ix: int, iy: int) -> bool:
+        """Check if the icon rectangle fits within any available screen."""
+        sz = self.ICON_SIZE
+        for screen in QApplication.screens():
+            geom = screen.availableGeometry()
+            if (ix >= geom.left() and iy >= geom.top() and
+                    ix + sz <= geom.right() + 1 and iy + sz <= geom.bottom() + 1):
+                return True
+        return False
+
     # ── public helpers ──
-    def move_near_caret(self, x: int, y: int):
-        """Reposition to (x + offset, y + offset)."""
-        self.move(x + self.OFFSET_X, y + self.OFFSET_Y)
+    def move_near_caret(self, caret_x: int, caret_y: int, caret_h: int):
+        """Position the icon attached to the caret, falling back if off-screen."""
+        # Try preferred position first
+        ix, iy = self._calc_icon_pos(self._preferred_position, caret_x, caret_y, caret_h)
+        if self._is_on_screen(ix, iy):
+            self.move(ix, iy)
+            return
+
+        # Try fallback positions
+        for fb in _FALLBACK_ORDER.get(self._preferred_position, []):
+            ix, iy = self._calc_icon_pos(fb, caret_x, caret_y, caret_h)
+            if self._is_on_screen(ix, iy):
+                self.move(ix, iy)
+                return
+
+        # Last resort — clamp to screen
+        screen = QApplication.screenAt(QPoint(caret_x, caret_y))
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen:
+            geom = screen.availableGeometry()
+            ix = max(geom.left(), min(ix, geom.right() - self.ICON_SIZE))
+            iy = max(geom.top(), min(iy, geom.bottom() - self.ICON_SIZE))
+        self.move(ix, iy)
 
     def fade_out(self):
         """Start a smooth fade-out, then hide."""
@@ -387,6 +481,7 @@ class CaretCompanion(QObject):
         super().__init__(parent)
 
         self._enabled = False
+        self._position = "top-right"  # user preference
         self._icon: Optional[CaretCompanionIcon] = None
         self._bridge = CaretSignalBridge()
         self._bridge.key_pressed.connect(self._on_key_activity)
@@ -406,7 +501,7 @@ class CaretCompanion(QObject):
         self._fade_timer.timeout.connect(self._start_fade)
 
         # Last known caret pos  (to detect movement)
-        self._last_pos: Optional[Tuple[int, int]] = None
+        self._last_pos: Optional[Tuple[int, int, int]] = None
 
     # ── public API ──────────────────────────────────────
     def set_enabled(self, on: bool):
@@ -418,6 +513,12 @@ class CaretCompanion(QObject):
         else:
             self._stop_listener()
             self.hide_icon()
+
+    def set_position(self, pos: str):
+        """Set the preferred icon position relative to the caret."""
+        self._position = pos
+        if self._icon:
+            self._icon.set_preferred_position(pos)
 
     def hide_icon(self):
         """Immediately hide the icon (e.g. when overlay opens)."""
@@ -476,19 +577,20 @@ class CaretCompanion(QObject):
                 self._icon.fade_out()
             return
 
-        # Clamp to screen bounds
-        screen = QApplication.primaryScreen()
+        caret_x, caret_y, caret_h = pos
+
+        # Basic sanity clamp (the icon itself handles screen-edge logic)
+        screen = QApplication.screenAt(QPoint(caret_x, caret_y))
+        if screen is None:
+            screen = QApplication.primaryScreen()
         if screen:
             geom = screen.availableGeometry()
-            x = min(pos[0], geom.right() - 30)
-            y = min(pos[1], geom.bottom() - 30)
-            x = max(x, geom.left())
-            y = max(y, geom.top())
-            pos = (x, y)
+            caret_x = max(geom.left(), min(caret_x, geom.right()))
+            caret_y = max(geom.top(), min(caret_y, geom.bottom()))
 
-        self._last_pos = pos
+        self._last_pos = (caret_x, caret_y, caret_h)
         self._ensure_icon()
-        self._icon.move_near_caret(pos[0], pos[1])
+        self._icon.move_near_caret(caret_x, caret_y, caret_h)
         if not self._icon.isVisible():
             self._icon.show_icon()
 
@@ -502,6 +604,7 @@ class CaretCompanion(QObject):
     def _ensure_icon(self):
         if self._icon is None:
             self._icon = CaretCompanionIcon()
+            self._icon.set_preferred_position(self._position)
             self._icon.clicked.connect(self._on_icon_clicked)
 
     def _on_icon_clicked(self):

@@ -6,10 +6,10 @@ for user preferences like Click-to-Paste mode.
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QGraphicsDropShadowEffect, QSizePolicy
+    QPushButton, QGraphicsDropShadowEffect, QSizePolicy, QGridLayout
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPropertyAnimation, QEasingCurve, QTimer
+from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen, QFont
 
 from settings_manager import SettingsManager
 
@@ -100,6 +100,153 @@ class ToggleSwitch(QWidget):
         painter.setBrush(QBrush(handle_color))
         painter.drawEllipse(int(handle_x), int(handle_y), int(handle_radius), int(handle_radius))
 
+        painter.end()
+
+
+class CaretPositionPicker(QWidget):
+    """
+    Visual position selector for the Caret Companion icon.
+    Shows a simulated text cursor (blinking line) in the center
+    with 8 clickable position slots around it.
+    """
+
+    position_changed = pyqtSignal(str)
+
+    # Grid mapping: (row, col) → position key
+    _GRID = {
+        (0, 0): "top-left",
+        (0, 1): "top",
+        (0, 2): "top-right",
+        (1, 0): "left",
+        # (1,1) is the caret itself
+        (1, 2): "right",
+        (2, 0): "bottom-left",
+        (2, 1): "bottom",
+        (2, 2): "bottom-right",
+    }
+
+    _LABELS = {
+        "top-left": "↖", "top": "↑", "top-right": "↗",
+        "left": "←",                   "right": "→",
+        "bottom-left": "↙", "bottom": "↓", "bottom-right": "↘",
+    }
+
+    def __init__(self, current: str = "top-right", parent=None):
+        super().__init__(parent)
+        self._selected = current
+        self._buttons: dict[str, QPushButton] = {}
+        self._blink_on = True
+
+        self.setFixedSize(200, 160)
+        self._build()
+
+        # Blinking timer for the simulated caret
+        self._blink_timer = QTimer(self)
+        self._blink_timer.setInterval(530)
+        self._blink_timer.timeout.connect(self._toggle_blink)
+        self._blink_timer.start()
+
+    def _build(self):
+        layout = QGridLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        for (r, c), pos_key in self._GRID.items():
+            btn = QPushButton(self._LABELS[pos_key])
+            btn.setFixedSize(42, 36)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setProperty("posKey", pos_key)
+            btn.clicked.connect(self._on_btn_clicked)
+            self._buttons[pos_key] = btn
+            layout.addWidget(btn, r, c, Qt.AlignmentFlag.AlignCenter)
+
+        # Center cell — the simulated caret
+        self._caret_widget = QWidget()
+        self._caret_widget.setFixedSize(42, 36)
+        layout.addWidget(self._caret_widget, 1, 1, Qt.AlignmentFlag.AlignCenter)
+
+        self._refresh_styles()
+
+    def _on_btn_clicked(self):
+        btn = self.sender()
+        if btn:
+            pos_key = btn.property("posKey")
+            if pos_key and pos_key != self._selected:
+                self._selected = pos_key
+                self._refresh_styles()
+                self.position_changed.emit(pos_key)
+
+    def _refresh_styles(self):
+        for key, btn in self._buttons.items():
+            if key == self._selected:
+                btn.setStyleSheet(
+                    "QPushButton {"
+                    "  background: rgba(108, 142, 255, 0.35);"
+                    "  border: 2px solid #6C8EFF;"
+                    "  border-radius: 6px;"
+                    "  color: #FFFFFF;"
+                    "  font-size: 16px;"
+                    "  font-weight: bold;"
+                    "}"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton {"
+                    "  background: rgba(255, 255, 255, 0.05);"
+                    "  border: 1px solid rgba(255, 255, 255, 0.10);"
+                    "  border-radius: 6px;"
+                    "  color: #8888A0;"
+                    "  font-size: 14px;"
+                    "}"
+                    "QPushButton:hover {"
+                    "  background: rgba(108, 142, 255, 0.12);"
+                    "  border: 1px solid rgba(108, 142, 255, 0.4);"
+                    "  color: #BBBBDD;"
+                    "}"
+                )
+
+    def _toggle_blink(self):
+        self._blink_on = not self._blink_on
+        self._caret_widget.update()
+        self.update()
+
+    def setSelected(self, pos: str):
+        if pos in self._buttons and pos != self._selected:
+            self._selected = pos
+            self._refresh_styles()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        # Draw the blinking caret line in the center cell
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        cw = self._caret_widget
+        cx = cw.x() + cw.width() // 2
+        cy = cw.y() + 4
+        ch = cw.height() - 8
+
+        if self._blink_on:
+            pen = QPen(QColor(220, 220, 240))
+            pen.setWidthF(2.0)
+            painter.setPen(pen)
+            painter.drawLine(cx, cy, cx, cy + ch)
+
+        # Draw a small label under the grid
+        painter.setPen(QColor(130, 130, 160))
+        font = QFont()
+        font.setPointSize(8)
+        painter.setFont(font)
+        label_map = {
+            "top-right": "Top Right", "top-left": "Top Left",
+            "bottom-right": "Bottom Right", "bottom-left": "Bottom Left",
+            "top": "Top", "bottom": "Bottom",
+            "right": "Right", "left": "Left",
+        }
+        label = label_map.get(self._selected, self._selected)
+        painter.drawText(self.rect().adjusted(0, 0, 0, -2),
+                         Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+                         label)
         painter.end()
 
 
@@ -228,6 +375,38 @@ class SettingsDialog(QWidget):
 
         panel_layout.addLayout(cc_row)
 
+        # ── Caret Companion Position Picker ──
+        self.pos_section = QWidget()
+        pos_section_layout = QVBoxLayout(self.pos_section)
+        pos_section_layout.setContentsMargins(0, 0, 0, 0)
+        pos_section_layout.setSpacing(8)
+
+        pos_label = QLabel("Icon Position")
+        pos_label.setObjectName("SettingsItemTitle")
+        pos_label.setStyleSheet("font-size: 12px; color: #A6ADC8;")
+        pos_section_layout.addWidget(pos_label)
+
+        pos_desc = QLabel(
+            "Choose where the mini clipboard icon appears\n"
+            "relative to the blinking text cursor."
+        )
+        pos_desc.setObjectName("SettingsItemDesc")
+        pos_desc.setWordWrap(True)
+        pos_section_layout.addWidget(pos_desc)
+
+        self.pos_picker = CaretPositionPicker(
+            current=self.settings.caret_companion_position
+        )
+        self.pos_picker.position_changed.connect(self._on_position_changed)
+        pos_section_layout.addWidget(
+            self.pos_picker, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
+
+        # Only show position picker when caret companion is enabled
+        self.pos_section.setVisible(self.settings.caret_companion)
+
+        panel_layout.addWidget(self.pos_section)
+
         # ── Status indicator ──
         self.status_label = QLabel()
         self.status_label.setObjectName("SettingsStatusLabel")
@@ -263,7 +442,12 @@ class SettingsDialog(QWidget):
     def _on_cc_toggled(self, checked: bool):
         """Handle caret companion toggle change."""
         self.settings.caret_companion = checked
+        self.pos_section.setVisible(checked)
         self._update_status_label()
+
+    def _on_position_changed(self, pos: str):
+        """Handle caret companion position change."""
+        self.settings.caret_companion_position = pos
 
     def _update_status_label(self):
         """Update the status text below the toggles."""
