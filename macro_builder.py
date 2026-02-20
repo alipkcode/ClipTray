@@ -231,16 +231,22 @@ class KeyCaptureOverlay(QWidget):
         self._listening = True
         self.show()
         self.setFocus()
+        self.grabKeyboard()
+
+    def _stop(self):
+        """Internal: stop listening and release keyboard."""
+        self._listening = False
+        self.releaseKeyboard()
 
     def _cancel(self):
-        self._listening = False
+        self._stop()
         self.capture_cancelled.emit()
 
     def keyPressEvent(self, event):
         if self._listening:
             keys, label = key_event_to_action(event)
             if keys is not None:
-                self._listening = False
+                self._stop()
                 action = ActionStep(keys=keys, label=label)
                 self.action_captured.emit(action)
                 return
@@ -313,11 +319,12 @@ class MacroBuilder(QWidget):
 
         main_layout.addWidget(toolbar)
 
-        # Key capture overlay (hidden, shown inline when capturing)
-        self.capture_widget = KeyCaptureOverlay(self)
+        # Key capture overlay (hidden by default, shown inline when capturing)
+        self.capture_widget = KeyCaptureOverlay()
         self.capture_widget.action_captured.connect(self._on_action_captured)
         self.capture_widget.capture_cancelled.connect(self._on_capture_cancelled)
         self.capture_widget.hide()
+        main_layout.addWidget(self.capture_widget)
 
     def _refresh_ui(self):
         """Rebuild the visual step list from self.steps."""

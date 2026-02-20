@@ -938,6 +938,9 @@ class SettingsDialog(QWidget):
 
     def _on_close(self):
         """Close the settings dialog."""
+        # Ensure hotkey recorder releases keyboard if still recording
+        if hasattr(self, 'hotkey_recorder') and self.hotkey_recorder._recording:
+            self.hotkey_recorder._stop_recording()
         self.closed.emit()
 
     def resizeEvent(self, event):

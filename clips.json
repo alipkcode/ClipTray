@@ -1,19 +1,56 @@
 {
     "clips": [
         {
+            "id": "ad2f6323",
+            "title": "Test Macro",
+            "text": "Hello\\nWorld",
+            "color": "#6C8EFF",
+            "is_macro": true,
+            "steps": [
+                {
+                    "type": "text",
+                    "value": "Hello "
+                },
+                {
+                    "type": "action",
+                    "keys": [
+                        "enter"
+                    ],
+                    "label": "Enter"
+                },
+                {
+                    "type": "text",
+                    "value": "World"
+                }
+            ],
+            "pinned": false
+        },
+        {
             "id": "1",
             "title": "Email Signature",
-            "text": "Best regards,\nYour Name\nyour.email@example.com"
+            "text": "Best regards,\nYour Name\nyour.email@example.com",
+            "color": "#6C8EFF",
+            "is_macro": false,
+            "steps": [],
+            "pinned": false
         },
         {
             "id": "2",
             "title": "Phone Number",
-            "text": "+1 (555) 123-4567"
+            "text": "+1 (555) 123-4567",
+            "color": "#6C8EFF",
+            "is_macro": false,
+            "steps": [],
+            "pinned": false
         },
         {
             "id": "3",
             "title": "Address",
-            "text": "123 Main Street, City, State 12345"
+            "text": "123 Main Street, City, State 12345",
+            "color": "#6C8EFF",
+            "is_macro": false,
+            "steps": [],
+            "pinned": false
         }
     ]
 }
