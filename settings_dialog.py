@@ -251,6 +251,169 @@ class CaretPositionPicker(QWidget):
         painter.end()
 
 
+class HotkeyRecorder(QPushButton):
+    """
+    A button that records keyboard shortcuts.
+    Click to start recording, then press a modifier + key combination.
+    At least one modifier (Ctrl, Alt, Shift) plus a regular key is required.
+    Press Escape to cancel recording.
+    """
+
+    hotkey_changed = pyqtSignal(str)
+    recording_started = pyqtSignal()
+    recording_stopped = pyqtSignal()
+
+    def __init__(self, current_hotkey: str = "", parent=None):
+        super().__init__(parent)
+        self._hotkey = current_hotkey
+        self._recording = False
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setFixedHeight(38)
+        self._apply_normal_style()
+        self.clicked.connect(self._toggle_recording)
+
+    # ── Recording control ──
+
+    def _toggle_recording(self):
+        if self._recording:
+            self._stop_recording()
+        else:
+            self._start_recording()
+
+    def _start_recording(self):
+        self._recording = True
+        self.setText("  Press a shortcut\u2026")
+        self.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 13px; color: #6C8EFF;"
+            "  background: rgba(108, 142, 255, 0.12);"
+            "  border: 2px solid rgba(108, 142, 255, 0.50);"
+            "  border-radius: 8px; padding: 6px 14px; text-align: left;"
+            "}"
+        )
+        self.recording_started.emit()
+        self.setFocus()
+        self.grabKeyboard()
+
+    def _stop_recording(self):
+        self._recording = False
+        self.releaseKeyboard()
+        self._apply_normal_style()
+        self.recording_stopped.emit()
+
+    # ── Display ──
+
+    def _apply_normal_style(self):
+        if self._hotkey:
+            display = self._hotkey.replace("+", "  +  ")
+            self.setText(f"  {display}")
+        else:
+            self.setText("  Click to set shortcut")
+        self.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 13px; color: #CDD6F4;"
+            "  background: rgba(255, 255, 255, 0.05);"
+            "  border: 1px solid rgba(255, 255, 255, 0.10);"
+            "  border-radius: 8px; padding: 6px 14px; text-align: left;"
+            "}"
+            "QPushButton:hover {"
+            "  background: rgba(108, 142, 255, 0.10);"
+            "  border-color: rgba(108, 142, 255, 0.30);"
+            "}"
+        )
+
+    # ── Key capture ──
+
+    def keyPressEvent(self, event):
+        if not self._recording:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+
+        # Escape cancels recording
+        if key == Qt.Key.Key_Escape:
+            self._stop_recording()
+            return
+
+        # Ignore standalone modifier presses — wait for a real key
+        if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift,
+                   Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+            return
+
+        modifiers = event.modifiers()
+        parts = []
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            parts.append("Ctrl")
+        if modifiers & Qt.KeyboardModifier.AltModifier:
+            parts.append("Alt")
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            parts.append("Shift")
+
+        # Require at least one modifier
+        if not parts:
+            return
+
+        key_name = self._key_to_name(key)
+        if key_name:
+            parts.append(key_name)
+            self._hotkey = "+".join(parts)
+            self._stop_recording()
+            self.hotkey_changed.emit(self._hotkey)
+
+    def focusOutEvent(self, event):
+        if self._recording:
+            self._stop_recording()
+        super().focusOutEvent(event)
+
+    # ── Public helpers ──
+
+    def get_hotkey(self) -> str:
+        return self._hotkey
+
+    def clear_hotkey(self):
+        self._hotkey = ""
+        self._apply_normal_style()
+        self.hotkey_changed.emit("")
+
+    # ── Key-name mapping ──
+
+    @staticmethod
+    def _key_to_name(key: int):
+        """Convert a Qt key code to a human-readable name."""
+        _SPECIAL = {
+            Qt.Key.Key_Space: "Space",
+            Qt.Key.Key_Return: "Enter", Qt.Key.Key_Enter: "Enter",
+            Qt.Key.Key_Tab: "Tab",
+            Qt.Key.Key_Backspace: "Backspace",
+            Qt.Key.Key_Delete: "Delete", Qt.Key.Key_Insert: "Insert",
+            Qt.Key.Key_Home: "Home", Qt.Key.Key_End: "End",
+            Qt.Key.Key_PageUp: "PageUp", Qt.Key.Key_PageDown: "PageDown",
+            Qt.Key.Key_Up: "Up", Qt.Key.Key_Down: "Down",
+            Qt.Key.Key_Left: "Left", Qt.Key.Key_Right: "Right",
+            Qt.Key.Key_F1: "F1", Qt.Key.Key_F2: "F2",
+            Qt.Key.Key_F3: "F3", Qt.Key.Key_F4: "F4",
+            Qt.Key.Key_F5: "F5", Qt.Key.Key_F6: "F6",
+            Qt.Key.Key_F7: "F7", Qt.Key.Key_F8: "F8",
+            Qt.Key.Key_F9: "F9", Qt.Key.Key_F10: "F10",
+            Qt.Key.Key_F11: "F11", Qt.Key.Key_F12: "F12",
+            Qt.Key.Key_Minus: "-", Qt.Key.Key_Equal: "=",
+            Qt.Key.Key_BracketLeft: "[", Qt.Key.Key_BracketRight: "]",
+            Qt.Key.Key_Semicolon: ";", Qt.Key.Key_Apostrophe: "'",
+            Qt.Key.Key_Comma: ",", Qt.Key.Key_Period: ".",
+            Qt.Key.Key_Slash: "/", Qt.Key.Key_Backslash: "\\",
+            Qt.Key.Key_QuoteLeft: "`",
+        }
+        if key in _SPECIAL:
+            return _SPECIAL[key]
+        if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+            return chr(key)
+        if Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+            return chr(key)
+        return None
+
+
 class CreditsDialog(QWidget):
     """
     Credits / About page for ClipTray.
@@ -613,6 +776,60 @@ class SettingsDialog(QWidget):
 
         panel_layout.addWidget(self.pos_section)
 
+        # ── Divider ──
+        divider_hk = QWidget()
+        divider_hk.setFixedHeight(1)
+        divider_hk.setStyleSheet("background-color: rgba(255, 255, 255, 0.04);")
+        panel_layout.addWidget(divider_hk)
+
+        # ── Global Hotkey ──
+        hk_row = QVBoxLayout()
+        hk_row.setSpacing(6)
+
+        hk_title = QLabel("\u2328  Global Hotkey")
+        hk_title.setObjectName("SettingsItemTitle")
+        hk_row.addWidget(hk_title)
+
+        hk_desc = QLabel(
+            "Set a keyboard shortcut to open ClipTray from\n"
+            "anywhere, even when it\u2019s hidden in the system tray."
+        )
+        hk_desc.setObjectName("SettingsItemDesc")
+        hk_desc.setWordWrap(True)
+        hk_row.addWidget(hk_desc)
+
+        hk_control_row = QHBoxLayout()
+        hk_control_row.setSpacing(8)
+
+        self.hotkey_recorder = HotkeyRecorder(
+            current_hotkey=self.settings.hotkey
+        )
+        self.hotkey_recorder.hotkey_changed.connect(self._on_hotkey_changed)
+        hk_control_row.addWidget(self.hotkey_recorder, 1)
+
+        self.hk_clear_btn = QPushButton("\u2715")
+        self.hk_clear_btn.setFixedSize(38, 38)
+        self.hk_clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.hk_clear_btn.setToolTip("Clear shortcut")
+        self.hk_clear_btn.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 14px; color: #A6ADC8;"
+            "  background: rgba(255, 255, 255, 0.05);"
+            "  border: 1px solid rgba(255, 255, 255, 0.10);"
+            "  border-radius: 8px;"
+            "}"
+            "QPushButton:hover {"
+            "  background: rgba(255, 80, 80, 0.15);"
+            "  color: #FF6B6B; border-color: rgba(255, 80, 80, 0.30);"
+            "}"
+        )
+        self.hk_clear_btn.clicked.connect(self._on_hotkey_clear)
+        self.hk_clear_btn.setVisible(bool(self.settings.hotkey))
+        hk_control_row.addWidget(self.hk_clear_btn)
+
+        hk_row.addLayout(hk_control_row)
+        panel_layout.addLayout(hk_row)
+
         # ── Status indicator ──
         self.status_label = QLabel()
         self.status_label.setObjectName("SettingsStatusLabel")
@@ -672,6 +889,16 @@ class SettingsDialog(QWidget):
         """Handle caret companion position change."""
         self.settings.caret_companion_position = pos
 
+    def _on_hotkey_changed(self, hotkey: str):
+        """Handle global hotkey change."""
+        self.settings.hotkey = hotkey
+        self.hk_clear_btn.setVisible(bool(hotkey))
+        self._update_status_label()
+
+    def _on_hotkey_clear(self):
+        """Clear the global hotkey."""
+        self.hotkey_recorder.clear_hotkey()
+
     def _update_status_label(self):
         """Update the status text below the toggles."""
         parts = []
@@ -679,6 +906,8 @@ class SettingsDialog(QWidget):
             parts.append("\u2713 Click-to-Paste is ON")
         if self.settings.caret_companion:
             parts.append("\u2713 Caret Companion is ON")
+        if self.settings.hotkey:
+            parts.append(f"\u2713 Hotkey: {self.settings.hotkey}")
 
         if parts:
             self.status_label.setText("  \u00b7  ".join(parts))

@@ -2,15 +2,15 @@
 
 
 a = Analysis(
-    ['C:\\Users\\Ali\\OneDrive\\Desktop\\computer class\\Tamrin\\ClipTray\\main.py'],
+    ['C:\\Users\\Ali\\Documents\\GitHub\\ClipTray\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\Ali\\OneDrive\\Desktop\\computer class\\Tamrin\\ClipTray\\icon.png', '.'), ('C:\\Users\\Ali\\OneDrive\\Desktop\\computer class\\Tamrin\\ClipTray\\clips.json', '.')],
+    datas=[('C:\\Users\\Ali\\Documents\\GitHub\\ClipTray\\icon.png', '.'), ('C:\\Users\\Ali\\Documents\\GitHub\\ClipTray\\clips.json', '.')],
     hiddenimports=['uiautomation', 'comtypes', 'comtypes.gen', 'comtypes.gen.UIAutomationClient'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PyQt5'],
     noarchive=False,
     optimize=0,
 )

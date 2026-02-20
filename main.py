@@ -170,6 +170,32 @@ class ClickSignalBridge(QObject):
     click_detected = pyqtSignal()
 
 
+class HotkeySignalBridge(QObject):
+    """Bridge to safely emit Qt signals when the global hotkey is pressed."""
+    hotkey_activated = pyqtSignal()
+
+
+def hotkey_to_pynput_format(hotkey_str: str):
+    """
+    Convert a human-readable hotkey like 'Ctrl+Shift+V' to the pynput
+    GlobalHotKeys format like '<ctrl>+<shift>+v'.
+    """
+    if not hotkey_str:
+        return None
+    _MODIFIER_MAP = {"ctrl": "<ctrl>", "alt": "<alt>", "shift": "<shift>"}
+    parts = [p.strip() for p in hotkey_str.split("+")]
+    out = []
+    for part in parts:
+        low = part.lower()
+        if low in _MODIFIER_MAP:
+            out.append(_MODIFIER_MAP[low])
+        elif len(part) == 1 and part.isalnum():
+            out.append(low)
+        else:
+            out.append(f"<{low}>")
+    return "+".join(out)
+
+
 class WaitingBadge(QWidget):
     """
     A small floating badge that tells the user ClipTray is waiting
@@ -265,6 +291,11 @@ class ClipTrayApp:
         self._click_bridge = ClickSignalBridge()
         self._click_bridge.click_detected.connect(self._on_global_click)
 
+        # ── Global hotkey state ──
+        self._hotkey_bridge = HotkeySignalBridge()
+        self._hotkey_bridge.hotkey_activated.connect(self._on_hotkey_activated)
+        self._hotkey_listener = None
+
         # ── Tray Icon ──
         self.tray_icon = QSystemTrayIcon()
         self.tray_icon.setIcon(load_icon())
@@ -306,6 +337,9 @@ class ClipTrayApp:
         # Watch for settings changes (re-check after overlay closes)
         self.overlay.settings_changed = self._on_settings_changed
 
+        # ── Start global hotkey listener ──
+        self._start_hotkey_listener()
+
         # ── Show tray ──
         self.tray_icon.show()
 
@@ -341,15 +375,56 @@ class ClipTrayApp:
         self.overlay.show_overlay()
 
     def _on_settings_changed(self):
-        """Called when settings dialog closes — re-sync caret companion."""
+        """Called when settings dialog closes — re-sync caret companion & hotkey."""
         self.caret_companion.set_position(self.settings.caret_companion_position)
         self.caret_companion.set_enabled(self.settings.caret_companion)
+        self._start_hotkey_listener()
 
     def _on_type_clip(self, text: str):
         """Handle clip selection — type the text into the active field (immediate mode)."""
         # Give time for focus to return to the previous window
         time.sleep(0.15)
         type_text(text)
+
+    # ── Global Hotkey ──────────────────────────────────────────
+
+    def _start_hotkey_listener(self):
+        """(Re)start the global hotkey listener with the current setting."""
+        self._stop_hotkey_listener()
+        hotkey = self.settings.hotkey
+        if not hotkey:
+            return
+        pynput_fmt = hotkey_to_pynput_format(hotkey)
+        if not pynput_fmt:
+            return
+        try:
+            from pynput.keyboard import GlobalHotKeys
+            self._hotkey_listener = GlobalHotKeys({
+                pynput_fmt: self._hotkey_bridge.hotkey_activated.emit
+            })
+            self._hotkey_listener.daemon = True
+            self._hotkey_listener.start()
+        except Exception as e:
+            print(f"[ClipTray] Error starting hotkey listener: {e}")
+
+    def _stop_hotkey_listener(self):
+        """Stop the global hotkey listener if running."""
+        if self._hotkey_listener:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
+            self._hotkey_listener = None
+
+    def _on_hotkey_activated(self):
+        """Global hotkey was pressed — toggle the overlay."""
+        if self.overlay.isVisible():
+            # Don't close if a dialog/settings panel is open
+            if self.overlay.settings_dialog or self.overlay.dialog:
+                return
+            self.overlay.hide_overlay()
+        else:
+            self._show_overlay()
 
     def _on_wait_and_type_clip(self, text: str):
         """Handle clip selection in Click-to-Paste mode — wait for user click."""
@@ -443,6 +518,7 @@ class ClipTrayApp:
     def _quit(self):
         """Clean exit."""
         self._stop_click_listener()
+        self._stop_hotkey_listener()
         self._hide_waiting_badge()
         self.caret_companion.set_enabled(False)
         self.tray_icon.hide()

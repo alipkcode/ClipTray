@@ -43,6 +43,7 @@ def build():
         "--hidden-import=comtypes",
         "--hidden-import=comtypes.gen",
         "--hidden-import=comtypes.gen.UIAutomationClient",
+        "--exclude-module=PyQt5",
     ] + datas + [
         main_script
     ]

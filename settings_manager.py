@@ -16,6 +16,7 @@ class SettingsManager:
         "click_to_paste": False,  # When True, wait for user click before pasting
         "caret_companion": False,  # When True, show a small icon near the text cursor
         "caret_companion_position": "top-right",  # Position of the icon relative to the caret
+        "hotkey": "",  # Global hotkey to open ClipTray (e.g., "Ctrl+Shift+V")
     }
 
     def __init__(self, filepath: str = None):
@@ -85,3 +86,12 @@ class SettingsManager:
     @caret_companion_position.setter
     def caret_companion_position(self, value: str):
         self.set("caret_companion_position", value)
+
+    @property
+    def hotkey(self) -> str:
+        """Global hotkey to open ClipTray."""
+        return str(self.get("hotkey", ""))
+
+    @hotkey.setter
+    def hotkey(self, value: str):
+        self.set("hotkey", value)
